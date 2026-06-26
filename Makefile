@@ -6,8 +6,12 @@ KERNEL_BIN = kernel.bin
 
 all: $(IMG)
 
+$(BOOT): boot_sect_simple.asm
+	nasm -f bin $< -o $@
+
 $(IMG): $(BOOT) $(KERNEL_BIN)
 	cat $(BOOT) $(KERNEL_BIN) > $(IMG)
+	truncate -s 1440k $(IMG)
 
 $(KERNEL_BIN): $(KERNEL_ASM) $(KERNEL_C)
 	nasm -f elf $(KERNEL_ASM) -o kernel.o

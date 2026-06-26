@@ -1,15 +1,19 @@
 void kernel_main() {
     char* video = (char*) 0xB8000;
+    
+    int i;
+    for (i = 0; i < 80 * 25 * 2; i += 2) {
+        video[i] = ' ';
+        video[i + 1] = 0x0F;
+    }
 
-    video[0] = 'L';
-    video[1] = 0x0F;
-    video[2] = 'o';
-    video[3] = 0x0F;
-    video[4] = 'u';
-    video[5] = 0x0F;
-    video[6] = 'O';
-    video[7] = 0x0F;
-    video[8] = 'S';
+    char* msg = "LouOS";
+    i = 0;
+    while (msg[i] != 0) {
+        video[i * 2] = msg[i];
+        video[i * 2 + 1] = 0x0F;
+        i++;
+    } 
 
     while(1);
 }

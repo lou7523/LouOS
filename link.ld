@@ -1,18 +1,19 @@
-ENTRY(kernel_main)
+ENTRY(inicio)
 
 SECTIONS {
     . = 0x8000;
 
     .text : {
-        kernel.o(.text)
+        *(.text.boot)
         *(.text)
-    }
-
-    .data : {
+        *(.rodata*)
         *(.data)
+        *(.bss)
     }
 
-    .bss : {
-        *(.bss)
+    /DISCARD/ : {
+        *(.eh_frame)
+        *(.comment)
+        *(.note*)
     }
 }

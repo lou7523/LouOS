@@ -1,6 +1,10 @@
 [org 0x7c00]    ; diz ao NASM o endereco onde este codigo vai ser guardado
                 ; BIOS carrega sempre o bootloader neste endereco
 
+xor ax, ax      ; configurar segmentos para 0
+mov ds, ax      ; DS = 0 (necessario para enderecos funcionarem com org 0x7c00)
+mov es, ax      ; ES = 0 (necessario para INT 13h carregar para ES:BX)
+
 mov ah, 0x0e    ; define AH no 0x0e = modo para imprimir caracteres
                 ; AH é a parte 'mais alta' do AX
                 ; 0x0e diz a BIOS para interromper o que se passa em 0x10 em avanco
@@ -32,18 +36,14 @@ int 0x10
 
 load_kernel:
     mov ah, 0x02         ; Funcao de ler sectores
-    mov al, 5            ; qunatos sectores desejas ler (5 x 512 = 2560)
+    mov al, 5           ; qunatos sectores desejas ler (5 x 512 = 2560)
     mov ch, 0            ; o setor 2 esta no cilindro 0
     mov cl, 2            ;o sector comeca em 1 e nao em 0. o sector 1 e o boot sector por isso a kernel comeca no 2
     mov dh, 0            ; a cabeca tem 2 faces (cima/baix) = cima, normalmente e usada sempre para os primeiros setores
     mov bx, 0x8000       ; endereco destino a memoria RAM. A BIOS vai copiar os seguintes setores lidos para este espaco de memoria
     int 0x13             ; executa tudo o que esta configurado aqui em cima
+    jc disk_error
     jmp 0x0000:0x8000    ; Vai saltar para o endereco onde esta a kernel
-
-int 0x13            ; vai executar
-jc disk_error       ; se nao der erro vai -> executar em 0x8000
-
-jmp 0x0000:0x8000   ; executa a kernel em 0x8000
 
 disk_error:
     mov al, 'E'     ; Vai guardar E em AL
