@@ -1,7 +1,6 @@
-[org 0x8000]
-
 jmp inicio
 
+extern kernel_main
 ; --- Dados ---
     texto db 'LouOS', 0
     fonte_off dw 0
@@ -66,15 +65,12 @@ barra_loop:
 desenhar_texto:
     mov al, [si]
     cmp al, 0
-    je fim_texto
+    je activar_pm
 
     call desenhar_char
     add word [cursor_x], 8      ; avanca 8 pixeis para a direita
     inc si
     jmp desenhar_texto
-
-fim_texto:
-    jmp $                       ; loop infinito - kernel fica aqui
 
 ; --- Desenha um caracter 8x8 na posicao (cursor_x, cursor_y) ---
 ; Entrada: AL = codigo ASCII do caracter
@@ -143,3 +139,57 @@ proximo_bit:
     pop bx
     pop ax
     ret
+
+activar_pm:
+    cli             ; desliga as interrupcoes (Obrigatorio)
+
+    lgdt [gdt_descriptor]       ; carrega o GDT
+
+    mov eax, cr0                ; le os registos de CR0
+    or eax, 1                   ; liga o bit 0 (modo protegido)
+    mov cr0, eax                ; escreve de volta
+
+    jmp 0x08:inicio_32bit       ; salta para o codigo 0x08
+
+[bits 32]
+inicio_32bit:
+    mov ax, 0x10
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+    mov ss, ax
+
+    mov esp, 0x90000
+
+    call kernel_main
+
+    jmp $
+
+; GDT - Global Descriptor Table
+gdt_inicio:
+    
+    dq 0 ; entrada nula - obrigatoria
+
+    ; entrada 1 - segmento de codigo 32 bits
+    dw 0xFFFF       ; limites (bits 0-15)
+    dw 0x0000       ; base (bits 0-15)
+    db 0x00         ; base (bits 16-23)
+    db 10011010b    ; acesso: presente, codigo 
+    db 11001111b    ; flags: 32 bits, limite bits 16-19
+    db 0x00         ; base (24-31)
+
+    ; entrada 2 - segmento de dados 32 bits
+    dw 0xFFFF       ; limites (bits 0-15)
+    dw 0x0000       ; base (bits 0-15)
+    db 0x00         ; base (bits 16-23)
+    db 10010010b    ; acesso: presente, codigo
+    db 11001111b    ; flags: 32 bits, limite bits 16-19
+    db 0x00         ; base (24-31)
+
+gdt_fim:
+
+gdt_descriptor:
+    dw gdt_fim - gdt_inicio - 1     ; tamanho do GDT
+    dd gdt_inicio                   ; Endereco do GDT
+
