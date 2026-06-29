@@ -73,6 +73,42 @@ void pic_init() {
               Quando se diz ao PIC que ICW4 = 0x01 estamos a pedir para utilizar o modo 8086
               e nao o modo MCS-80 (mais antigo)
     */
-
-
 }
+
+struct idt_entrada {
+    unsigned short enderecoBaixo;   // bits 0-15
+    unsigned short selector;        // sempre 0x08
+    unsigned char zero;             // sempre 0
+    unsigned char tipo;             // sempre 0x8E
+    unsigned short enderecoAlto;    // bits 16-31 do handler
+} __atributo__((packed));   //impede a CPU de ler lixo
+
+struct idt_entrada idt[256];
+
+struct idt_descriptor {
+    unsigned short tamanho;     //tamanho da tela em bytes - 1
+    unsigned int endereco;      //endereco da tabela na RAM
+} __attribute__ ((packed));
+
+struct  idt_descriptor idt_desc;
+
+void idt_set(int numero, unsigned int handler) {
+    idt[numero].enderecoBaixo = handler & 0xFFFF;           //le os primeiros 16 bits do endereco
+    idt[numero].selector = 0x08;
+    idt[numero].zero = 0;
+    idt[numero].tipo = handler & 0xFFFF;
+    idt[numero].enderecoAlto = (handler >> 16) & 0xFFFF;    //desloca o endereco 16 bits para a direita, ficando com os ultimos 16bits
+}
+
+void idt_init() {
+    idt_desc.tamanho = sizeof(idt) - 1;
+    idt_desc.endereco = (unsigned int) idt;
+
+
+    __asm__ volatile ("lidt %0" : : "m"(idt_desc));
+
+    //lidt - instrucao em assembly que conecta o decriptor da IDT na GPU
+}
+
+    __asm__ volatile ("sti"); //liga interrupçoes 
+    //sem isto o CPU vai ignorar o PIC, mesmo com o IDT inicializado corretamente
