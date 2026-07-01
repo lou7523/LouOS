@@ -5,7 +5,7 @@ extern keyboard_handler_c       ;Diz ao assembler que estas funcoes estao noutro
 extern kernel_main
 
 [bits 16]                   ;inicio do modo 16bits
-//inicio da funcao inicio
+;inicio da funcao inicio
 inicio:
     cli                     ;Clear Interrupt Flag, desliga as interrupcoes para nao ser interrompido por nenhum hardware
 
@@ -15,7 +15,7 @@ inicio:
     ;temos de fazer isto pois o bootloader assume enderecos a partir de 0x7c00 com segmentos a 0, sem isto
     ;os enderecos calculados mais a frente iriam ser errados
 
-    mov di, 0x9000          ;di vai apontar para o mapa de memoria da BIOS
+    mov di, 0x2000          ;di vai apontar para o mapa de memoria da BIOS
     xor ebx, ebx            ;ebx vai ser o marcado de posicao que a BIOS vai usar para saber onde ficou entre uma chamada e a seguinte
 
 ler_mapa:
@@ -27,14 +27,22 @@ ler_mapa:
     int 0x15                ;Executa o pedido a BIOS
 
     jc fim_mapa         ;Jump If Carry, verifica se a chamada falhou e salta para fora do ciclo caso aconteca algum erro
+
+    add di, 20          ;Avanca-se 20 bytes 
+    
     cmp ebx, 0          ;se ebx for 0, para verificar se ainda a blocos
     je fim_mapa         ;Jump if Equal caso sim
 
-    add di, 20          ;Avanca-se 20 bytes 
     jmp ler_mapa        ;volta-se ao inicio da funcao
 
 fim_mapa:
 ;Funcao fim mapa
+    xor eax, eax
+    mov [di],       eax
+    mov [di+4],     eax
+    mov [di+8],     eax
+    mov [di+12],    eax
+    mov [di+16],    eax
 
     o32 lgdt [gdt_descriptor]       ; Carrega o GDT na CPU
     mov eax, cr0                    ; cr0 e um registo para o controlo da CPU, o bit 0 = PE (Protection Enable), e ativa-lo e o que liga o modo 32 bits
