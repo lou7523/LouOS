@@ -2,6 +2,27 @@ extern void keyboard_handler();
 void pic_init();
 void idt_init();
 void idt_set(int numero, unsigned int handler);
+void imprimirNumero(int numero, int posicao);
+void scroll();
+void lerMapaMemoria();
+void inicializarMemoria();
+unsigned int alocarPagina();
+void libertarPagina(unsigned int endereco);
+int verificarColisao(unsigned int endA, unsigned int tamA, unsigned int endB, unsigned int tamB);
+
+#define TamanhoPagina 4096          //4KB, pois este e o valor definido pela arquitetura x86
+#define TotalPagina 32768           /*
+                                        RAM que necessita de ser suportada: 128MB
+                                        128MB em bytes: 128 * 1024 * 1024 = 134217728
+                                        Dividido pelo tamanho de cada pagina: 134217728 / 4096 = 32768, este numero e o maximo de paginas possiveis
+                                    */
+unsigned int bitmap[1024];
+
+struct blocoMemoria {
+    unsigned long long enderecoBase;
+    unsigned long long tamanho;
+    unsigned int tipo;
+} __attribute__((packed));
 
 
 static inline void outb(unsigned short porto, unsigned char valor) {
@@ -17,19 +38,22 @@ static inline void outb(unsigned short porto, unsigned char valor) {
 
 void kernel_main() {
     char* video = (char*) 0xB8000;
-    int i;
+    int i;  
     for (i = 0; i < 80 * 25 * 2; i += 2) {
         video[i] = ' ';
         video[i + 1] = 0x0F;
     }
 
-    char* msg = "LouOS";
-    i = 0;
-    while (msg[i] != 0) {
-        video[i * 2] = msg[i];
-        video[i * 2 + 1] = 0x0F;
-        i++;
+    unsigned int enderecoBitmap = (unsigned int) bitmap;
+    unsigned int tamanhoBitmap = 1024 * 4;
+    if (verificarColisao(0x2000, 20 * 32, enderecoBitmap, tamanhoBitmap)) {    //0x2000 -> endereco do mapa de memoria, 20 -> tamanho de cada bloco, 32 -> n maximo de blocos que o ciclo int 0x15 pode escrever
+        video[0] = 'C';                                                         //onde comeca                            tamanho total reservado para o bitmap (640bytes)
+        video[1] = 0x4F;    
+        while(1);
     }
+
+    inicializarMemoria();
+    lerMapaMemoria();
 
     pic_init();
     idt_init();
@@ -192,18 +216,13 @@ static inline unsigned char inb(unsigned short porto) {
         }
     };
 
-    struct blocoMemoria {
-        unsigned long long enderecoBase;
-        unsigned long long tamanho;
-        unsigned int tipo;
-    } __attribute__((packed));
 
     void lerMapaMemoria() {
-        struct blocoMemoria* mapa = (struct blocoMemoria*) 0x9000;
+        struct blocoMemoria* mapa = (struct blocoMemoria*) 0x2000;
 
         int i = 0;
         while(mapa[i].tipo != 0) {
-            unsigned int tipoAtual = mapa[i].tipo;
+            imprimirNumero(mapa[i].tipo, i * 5);
             i++;
         }
     };
@@ -231,4 +250,81 @@ static inline unsigned char inb(unsigned short porto) {
             video[(posicao + j) * 2 + 1] = 0x0F;
         }
     }
-    
+
+    void inicializarMemoria() {
+        for (int i = 0; i < 1024; i++) {    //vai marcar todas as paginas como ocupadas, para nao haver risco de sem querer dar overwrite em enderecos ocupados
+            bitmap[i] = 0xFFFFFFFF;         //mete 0xFFFFFFFF, ou seja, todos os 32 bits e mete-os a 1, 1 = todas as paginas ocupadas
+        }
+
+        struct blocoMemoria* mapa = (struct blocoMemoria*) 0x2000;      //Percorrer o mapa da BIOS que escreveu em 0x2000
+
+        int j = 0;
+        while (mapa[j].tipo != 0) {                                                             //0 nao escrito, fim da lista
+            if (mapa[j].tipo == 1) {                                                            //1 -> livre; 2 -> reservado
+
+                //calcular qual e a primeira pagina deste bloco
+                //ex: enderecoBase 0x100000 (1MB) / 4096 = pagina 256
+                unsigned int primeiraPagina = mapa[j].enderecoBase / TamanhoPagina;
+
+                //calcular quantas paginas cabem neste bloco
+                //ex: tamanho 0x7EE0000 (127MB) / 4096 = 32480 paginas
+                unsigned int numPaginas = mapa[j].tamanho / TamanhoPagina;
+
+                //marcar cada pagina deste bloco como livre (bit a 0)
+                for (int x = 0; x < numPaginas; x++) {
+                    //primeira pagina + x / 32 -> unsigned int do bitmap
+                    //(primeiraPagina + x) % 32 -> qual bit dentro desse unsigned int
+                    //~(1 << bit) -> todos os bits a 1 excepto o que queremos pôr a 0
+                    //&= aplica a mascara, so alterando esse bit
+                    bitmap[(primeiraPagina + x)/ 32] &= ~(1 << ((x + primeiraPagina) % 32));
+                }
+            }
+        j++;        //vai para o seguinte
+        }
+    };
+
+    unsigned int alocarPagina() {
+        for (int a = 0; a < 1024; a++) {                                    //percorre os 1024 unsigned ints do bitmap
+            for (int b = 0; b < 32; b++) {                                  //percorre os 32 bits de cada unsigned int
+                if (!(bitmap[a] & (1 << b))) {                              //se o bit b do elemento a for 0 -> pagina livre
+                    bitmap[a] |= (1 << b);                                  //se tiver livre marca a pagina como ocupada
+                    unsigned int endereco = (a * 32 + b) * TamanhoPagina;    /*
+                                                                                Formula para saber o endereco da pagina
+
+                                                                                a -> numero do unsigned int que parou
+                                                                                b -> numero do bit do unsigned int de a
+                                                                                32 -> pois cada unsigned int tem 32 bits
+                                                                                Tamanho da Pagina -> 4096;
+
+                                                                                EX:
+                                                                                    a = 256
+                                                                                    b = 0
+
+                                                                                    (256 * 32 + 0) = 8192
+                                                                                    endereco = 8192 * 4096 = 33554432
+                                                                                    33554432 / 1024 / 1024 = 32MB
+
+                                                                                    32MB -> 0x2000000
+
+                                                                                Ao saber o tamanho da pagina conseguimos saber o endereco
+                                                                            */
+                    return endereco;                                         //vai devolver a variavel endereco
+                }
+            }
+        }
+        return 0;                                                           //se estiver ocupada retorna 0
+
+    };
+
+    void libertarPagina(unsigned int endereco) {
+        unsigned int pagina = endereco /TamanhoPagina;
+        bitmap[pagina / 32] &= ~(1 << (pagina % 32));
+    }
+
+    //Detector de Colisoes de Memoria
+    int verificarColisao(unsigned int endA, unsigned int tamA, unsigned int endB, unsigned int tamB) {
+        if (endA + tamA <= endB) return 0;
+        if (endB + tamB <= endA) return 0;
+
+        return 1;
+    }

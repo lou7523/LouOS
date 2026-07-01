@@ -35,15 +35,16 @@ mov al, 'o'
 int 0x10
 
 load_kernel:
-    mov ah, 0x02         ; Funcao de ler sectores
-    mov al, 5           ; qunatos sectores desejas ler (5 x 512 = 2560)
-    mov ch, 0            ; o setor 2 esta no cilindro 0
-    mov cl, 2            ;o sector comeca em 1 e nao em 0. o sector 1 e o boot sector por isso a kernel comeca no 2
-    mov dh, 0            ; a cabeca tem 2 faces (cima/baix) = cima, normalmente e usada sempre para os primeiros setores
-    mov bx, 0x8000       ; endereco destino a memoria RAM. A BIOS vai copiar os seguintes setores lidos para este espaco de memoria
-    int 0x13             ; executa tudo o que esta configurado aqui em cima
+    mov ah, 0x02            ; Funcao de ler sectores
+    mov al, 20              ; qunatos sectores desejas ler (5 x 512 = 2560)
+    mov ch, 0               ; o setor 2 esta no cilindro 0
+    mov cl, 2               ;o sector comeca em 1 e nao em 0. o sector 1 e o boot sector por isso a kernel comeca no 2
+    mov dh, 0               ; a cabeca tem 2 faces (cima/baix) = cima, normalmente e usada sempre para os primeiros setores
+    mov dl, 0x80
+    mov bx, 0x8000          ; endereco destino a memoria RAM. A BIOS vai copiar os seguintes setores lidos para este espaco de memoria
+    int 0x13                ; executa tudo o que esta configurado aqui em cima
     jc disk_error
-    jmp 0x0000:0x8000    ; Vai saltar para o endereco onde esta a kernel
+    jmp 0x0000:0x8000       ; Vai saltar para o endereco onde esta a kernel
 
 disk_error:
     mov al, 'E'     ; Vai guardar E em AL
@@ -54,7 +55,7 @@ disk_error:
 jmp $           ; prende a CPU num loop infinito
                 ; este faz-lo pois nao ha nada abaixo e sem ele podem se corromper ficheiros
                 ; tipo um while(1) em C
-
+                
 times 510-($-$$) db 0   ; enche o espaco vazio no sector cheiso de 0 até ao byte 510
                         ;  $ = posicao atual : $$ = inicio de uma seccao : basicamente significa quantos bytes ja escrevi
                         ; ate ao 510 pois o 510 e 511 fazem parte do magic number, um endereco onde a BIOS vai automaticamente para verificar se o programa e bootable

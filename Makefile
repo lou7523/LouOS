@@ -19,8 +19,8 @@ $(KERNEL_BIN): $(KERNEL_ASM) $(KERNEL_C)
 	ld -m elf_i386 -T link.ld --oformat binary -o $(KERNEL_BIN) kernel.o kernel_c.o
 
 run: $(IMG)
-	qemu-system-x86_64 -drive format=raw,file=$(IMG)
-
+	qemu-system-i386 -drive format=raw,file=$(IMG),if=ide,index=0 -boot order=c -machine pc-i440fx-3.1 -s
+	
 clean:
 	rm -f $(KERNEL_BIN) $(IMG) kernel.o kernel_c.o
 
