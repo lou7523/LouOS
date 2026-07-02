@@ -24,6 +24,37 @@ struct blocoMemoria {
     unsigned int tipo;
 } __attribute__((packed));
 
+struct elfHeader {                      //cabecalho no inicio de ficheiros ELF
+    unsigned char magico[4];            //4 numeros magicos para ver se o ficheiro ELF realmente o é, e para ver se funciona
+    unsigned char classe;               //1 = 32 bits / 2 = 64 bits, vamos verificar se e 1
+    unsigned char dados;                //little-endian -> no byte menos significativo para o mais
+    unsigned char versao;               //Campos que nao uso
+    unsigned char padding[9];           //o padding sao bytes reservados que a especificacao ELF deixou para uso futuro. Sempre 0
+    unsigned short tipo;                //vamos verificar se tipo = 2, se sim vai ser executavel
+    unsigned short maquina;             //3 =x86 32bits. Vamo verificar se e 3 para confirmar se o programa tem a arquitetura certa
+    unsigned int versao2;               //versao do formato ELF, sempre 1
+    unsigned int entryPoint;            //Endereco de memorio para onde o CPU deve ir para executar o programa (0x400024)
+    unsigned int phOffset;              //le quantos bytes desde o inicio do ficheiro estao os Program Headders
+    unsigned int shOffset;              //Nao sao precisas para executar o programa, so para debugging
+    unsigned int flags;                 //especifico da arquitetura, normalmente 0
+    unsigned short ehSize;              //tamanho deste header (52 bytes)
+    unsigned short phEntSize;           //tamanho de cada Programm Header (32 bytes)
+    unsigned short phNum;               //Quantos programm headers existem
+    unsigned short shEntSize;           //campos de section headers
+    unsigned short shNum;               // ""       ""        ""
+    unsigned short shStrIndex;          // ""       ""        ""
+} __attribute__ ((packed));
+
+struct programHeader {                  //estrutura do program header
+    unsigned int tipo;                  //1 = PT_LOAD
+    unsigned int offset;                //Onde esta o segmento do ficheiro
+    unsigned int vaddr;                 //para que endereco de memoria copiar este segmento
+    unsigned int paddr;                 //versao fisica do vaddr
+    unsigned int filesz;                //Quantos bytes este ocupa no ficheiro
+    unsigned int memsz;                 //Quantos bytes este ocupa na memoria
+    unsigned int flags;                 //Permissoes do Segmento R-read; W-write; E-execution;
+    unsigned int align;                 //Alinhamento do segmento de memoria
+} __attribute__ ((packed));
 
 static inline void outb(unsigned short porto, unsigned char valor) {
     //static inline - diz ao compilador para copiar esta função diretamente para onde e chamada
@@ -35,6 +66,68 @@ static inline void outb(unsigned short porto, unsigned char valor) {
     //outb do x86 escreve um byte num Porto de hardware.
     //Naturalmente C não tem esta capacidade, logo pede-se diretamente à CPU
 }
+
+int carregarElf(unsigned char* elf) {
+    struct elfHeader* header = (struct elfHeader*) elf; //elf e um ponteiro para bytes,e em vez de ler um a um manualmente convertemos para elfHeader
+                                                        //para o codigo ser mais facil de manter e mudar
+    if (header->magico[0] != 0x7F || header->magico[1] != 'E' || header->magico[2] != 'L' || header->magico[3] != 'F') {    //Lei de Morgan
+        return 0;                                                                                                           //Condicao que verifica se o ficheiro e valido
+    }
+
+    if (header->classe != 1) return 0;          /*
+                                                    se for 64 bits, os offsets e tamanhs das structs sao diferentes
+                                                    elfHeader e programHeader tem layouts diferentes em 64bit
+                                                    tentar le los com as structs de 32 bits daria valores completamente errados
+                                                */
+    if (header->tipo != 2) return 0;            /*
+                                                    podia ser da biblioteca .so ou ficheiros de objetos .o e esses nao tem entry point
+                                                    executavel, se a CPU fosse para la matava o sistema    
+                                                */
+
+    struct programHeader* ph = (struct programHeader*) (elf + header->phOffset);
+    /*
+        '->' operador de acesso membro através do ponteiro
+        fazemos essa struct acima para calcular os offsets automaticamente
+        pois se nao tinhamos de calcular um a um
+    */
+
+    for (int i = 0;header->phNum > i; i++) {
+         if (ph[i].tipo == 1) {
+            unsigned char* origem = elf + ph[i].offset;
+            unsigned char* destino = (unsigned char*) ph[i].vaddr;
+            int j;
+            for (j = 0; j < ph[i].filesz; j++) {
+                destino[j] = origem[j];
+            }
+
+            for (j = ph[i].filesz; j < ph[i].memsz; j++) {
+                destino[j] = 0;
+            }
+        }
+    }
+
+    void (*entrada)() = (void (*)()) header->entryPoint;    /*
+                                                                header->entryPoint:
+                                                                    - Numero onde o endereco de memoria comeca. No programa.elf é
+                                                                      0x400024.
+                                                                    
+                                                                (void (*)()):
+                                                                    - É um cast que converte o numero desse ponteiro para uma funcao
+
+                                                                void (*entrada)():
+                                                                    - Declara uma variavel chamada entrada que é um ponteiro para uma 
+                                                                      funcao.
+
+                                                                    entrada():
+                                                                    - Chama a funcao que está no endereco guardado em entrada, ou seja,
+                                                                      vai para 0x400024 e comeca a executar o programa
+                                                            */
+    entrada();
+
+    return 1;
+
+}
+
 
 void kernel_main() {
     char* video = (char*) 0xB8000;

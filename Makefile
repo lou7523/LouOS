@@ -3,14 +3,20 @@ BOOT = boot_sect_simple.bin
 KERNEL_ASM = kernel.asm
 KERNEL_C = kernel.c
 KERNEL_BIN = kernel.bin
+PROGRAMA = programa.elf
 
 all: $(IMG)
 
 $(BOOT): boot_sect_simple.asm
 	nasm -f bin $< -o $@
 
-$(IMG): $(BOOT) $(KERNEL_BIN)
+$(PROGRAMA): programa.c programa.ld
+	gcc -m32 -ffreestanding -nostdlib -nostartfiles -fno-pie -static -T programa.ld -o $@ programa.c
+
+$(IMG): $(BOOT) $(KERNEL_BIN) $(PROGRAMA)
 	cat $(BOOT) $(KERNEL_BIN) > $(IMG)
+	truncate -s 11264 $(IMG)
+	cat $(PROGRAMA) >> $(IMG)
 	truncate -s 1440k $(IMG)
 
 $(KERNEL_BIN): $(KERNEL_ASM) $(KERNEL_C)
@@ -20,8 +26,8 @@ $(KERNEL_BIN): $(KERNEL_ASM) $(KERNEL_C)
 
 run: $(IMG)
 	qemu-system-i386 -drive format=raw,file=$(IMG),if=ide,index=0 -boot order=c -machine pc-i440fx-3.1 -s
-	
+
 clean:
-	rm -f $(KERNEL_BIN) $(IMG) kernel.o kernel_c.o
+	rm -f $(KERNEL_BIN) $(IMG) kernel.o kernel_c.o $(PROGRAMA)
 
 .PHONY: all run clean
