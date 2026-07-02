@@ -1,5 +1,5 @@
 void _start() {
-    char* video = (char*) 0x8B000;
+    char* video = (char*) 0xB8000;
 
     char* msg = "Ola Mundo!";
     int i = 0;

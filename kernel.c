@@ -67,6 +67,18 @@ static inline void outb(unsigned short porto, unsigned char valor) {
     //Naturalmente C não tem esta capacidade, logo pede-se diretamente à CPU
 }
 
+static inline unsigned short inw(unsigned short porto) {
+    unsigned short resultado;
+    __asm__ volatile ("inw %1, %0" : "=a"(resultado) : "Nd"(porto));
+    return resultado;
+}
+
+static inline unsigned char inb(unsigned short porto) {
+    unsigned char resultado;
+    __asm__ volatile ("inb %1, %0" : "=a"(resultado) : "Nd"(porto));
+    return resultado;
+}
+
 int carregarElf(unsigned char* elf) {
     struct elfHeader* header = (struct elfHeader*) elf; //elf e um ponteiro para bytes,e em vez de ler um a um manualmente convertemos para elfHeader
                                                         //para o codigo ser mais facil de manter e mudar
@@ -128,6 +140,37 @@ int carregarElf(unsigned char* elf) {
 
 }
 
+void lerSector(unsigned int lba, unsigned char* destino) {
+    outb(0x1F2, 1);                         //le o setor 1
+    outb(0x1F3, lba & 0xFF);                //bits 0-7
+    outb(0x1F4, (lba >> 8) & 0xFF);         //bits 8-15
+    outb(0x1F5, (lba >> 16) & 0xFF);        //bits 16-23
+    outb(0x1F6, 0xE0 | (lba >> 24));        //bits 24-27 + modo LBA
+    outb(0x1F7, 0x20);                      //comando ler
+
+    //BSY - Busy, este e obit 7 do porto 0x1F7. Quando o IDE cmc a funcionar, vai buscar dados ao disco, dirante esse tempo BSY = 1 (on) e so quando termina fica BSY = 0
+    //DRQ - Data Request, este e o 3 bit do porto 0x1F7 e quando o BSY = 0, o DRQ = 1 "os dados estao no buffer, podes le los por agora"
+    //LBA - Logical Block Address, numero do sector que quero ler. (LBA cmc sempre no 0)
+
+    //espera o controlar estar pronto
+    while (inb(0x1F7) & 0x80);          //espera BSY = 0
+    while (!(inb(0x1F7) & 0x08));       //espera DRQ = 1
+
+    //ler 256 words do porto 0x1F0 para o destino
+    for (int i = 0; i < 256; i++) {
+        ((unsigned short*) destino)[i] = inw(0x1F0);
+    }
+}
+
+void executarPrograma() {
+    unsigned char buffer[8192];
+    for (int i = 0; i < 16; i++) {
+        lerSector(22 + i, buffer + i * 512);
+    }
+
+    carregarElf(buffer);
+}
+
 
 void kernel_main() {
     char* video = (char*) 0xB8000;
@@ -154,6 +197,8 @@ void kernel_main() {
 
     __asm__ volatile ("sti"); //liga interrupçoes 
     //sem isto o CPU vai ignorar o PIC, mesmo com o IDT inicializado corretamente
+
+    executarPrograma();
 
     while(1);
 }
@@ -236,12 +281,6 @@ void idt_init() {
 
     __asm__ volatile ("lidt %0" : : "m"(idt_desc));
     //lidt - instrucao em assembly que conecta o decriptor da IDT na GPU
-}
-
-static inline unsigned char inb(unsigned short porto) {
-    unsigned char resultado;
-    __asm__ volatile ("inb %1, %0" : "=a"(resultado) : "Nd"(porto));
-    return resultado;
 }
 
 /*
