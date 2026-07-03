@@ -9,6 +9,11 @@ void inicializarMemoria();
 unsigned int alocarPagina();
 void libertarPagina(unsigned int endereco);
 int verificarColisao(unsigned int endA, unsigned int tamA, unsigned int endB, unsigned int tamB);
+typedef unsigned int entradaPagina;
+entradaPagina pageDirectory[1024] __attribute__((aligned(4096)));
+entradaPagina pageTables[1024][1024] __attribute__((aligned(4096)));
+
+
 
 #define TamanhoPagina 4096          //4KB, pois este e o valor definido pela arquitetura x86
 #define TotalPagina 32768           /*
@@ -171,10 +176,44 @@ void executarPrograma() {
     carregarElf(buffer);
 }
 
+    void inicializarPaginacao() {
+        for (int i = 0; i < 1024; i++) {
+            pageDirectory[i] = 0;           //loop for que limpa todas as entradas do PageDirectpry
+    }
+        for (int j = 0; j < 1024; j++) {                    //preenche as duas primeiras Page Tables (8MB)
+            pageTables[0][j] = (j * 4096) | 0x03;           //mapeia as paginas de 0-1023
+            pageTables[1][j] = ((1024 + j) * 4096) | 0x03;  //mapeia as paginas de 1024-2047
+
+            //0x03 -> Este vai adicionar flags: bit 0 = 1 -> presente; bit 1 = 1 -> writable
+        }
+
+        pageDirectory[0] = (unsigned int) pageTables[0] | 0x03; //Liga as duas PageTables ao Page Directory
+        pageDirectory[1] = (unsigned int) pageTables[1] | 0x03;
+
+        __asm__ volatile ("mov %0, %%cr3" : : "r"(pageDirectory));  //Carrega o endereco do cr3, o registo especial da CPU que guarda onde esta o page directory.
+                                                                    //Sem isto o CPU nao sabe onde procurar tabelas
+        unsigned int cr0;                                           //le o valor de cr0
+        __asm__ volatile ("mov %%cr0, %0" : "=r"(cr0));                         
+        cr0 |= 0x80000000;                                          //Ativa o bit o bit 31 (PG - PageEnable)
+        __asm__ volatile ("mov %0, %%cr0" : : "r"(cr0));            //Escreve de volta
+
+        /*
+            A partir deste momento, todos os enderecos que o CPU usa sao tratados como virtuais e traduzidos atraves
+            das tabelas construidas
+        */
+    } 
+
+
+void desligarCursor() {
+    outb(0x3D4, 0x0A);
+    outb(0x3D5, 0x20);       //bit 5 a 1 desliga o cursor de hardware
+}
 
 void kernel_main() {
+    desligarCursor();
+
     char* video = (char*) 0xB8000;
-    int i;  
+    int i;
     for (i = 0; i < 80 * 25 * 2; i += 2) {
         video[i] = ' ';
         video[i + 1] = 0x0F;
@@ -189,6 +228,7 @@ void kernel_main() {
     }
 
     inicializarMemoria();
+    inicializarPaginacao();
     lerMapaMemoria();
 
     pic_init();
