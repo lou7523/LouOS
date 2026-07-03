@@ -1,6 +1,7 @@
 section .text.boot              ;diz ao linker para colocar o .text.boot ficar no inicio do binario final
 global inicio                   ;tornam estas duas funcoes visiveis fora deste ficheiro
-global keyboard_handler         
+global keyboard_handler
+global tss_descriptor         
 extern keyboard_handler_c       ;Diz ao assembler que estas funcoes estao noutro ficheiro
 extern kernel_main
 
@@ -93,6 +94,30 @@ gdt_inicio:
     db 10010010b    ; acesso: presente, codigo
     db 11001111b    ; flags: 32 bits, limite bits 16-19
     db 0x00         ; base (24-31)
+
+    ; entrada 3 - cdigo do Ring 3
+    dw 0xFFFF
+    dw 0x0000
+    db 0x00
+    db 11111010b    ; acesso: presente, Ring 3, dados
+    db 11001111b    ; flags: 32 bits, limite bits 16-19
+    db 0x00
+
+    ; entrada 4 - dados do Ring 3
+    dw 0xFFFF   
+    dw 0x0000
+    db 0x00
+    db 11110010b    ; acessp: presente, Ring 3, dados
+    db 11001111b    ; flags: 32 bits, limite bits 16-19
+    db 0x00
+
+tss_descriptor:
+    dw 0x0067          ; tamanho da TSS: 104 - 1 = 103 = 0x67
+    dw 0x0000           ; base bits 0-15 (preenchido em runtime)
+    db 0x00             ; base bits 16-23 (preenchido em runtime)
+    db 10001001b        ; tipo: TSS disponivel (0x89)
+    db 000000000        ; flags
+    db 0x00             ; base bits 24-31 (preenchido em runtime)
 
 gdt_fim:
 

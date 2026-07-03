@@ -1,4 +1,5 @@
 extern void keyboard_handler();
+extern unsigned char tss_descriptor[];
 void pic_init();
 void idt_init();
 void idt_set(int numero, unsigned int handler);
@@ -6,6 +7,7 @@ void imprimirNumero(int numero, int posicao);
 void scroll();
 void lerMapaMemoria();
 void inicializarMemoria();
+void configurarTSS();
 unsigned int alocarPagina();
 void libertarPagina(unsigned int endereco);
 int verificarColisao(unsigned int endA, unsigned int tamA, unsigned int endB, unsigned int tamB);
@@ -60,6 +62,48 @@ struct programHeader {                  //estrutura do program header
     unsigned int flags;                 //Permissoes do Segmento R-read; W-write; E-execution;
     unsigned int align;                 //Alinhamento do segmento de memoria
 } __attribute__ ((packed));
+
+struct TSS {
+    //originalmente o Ring 1 e 2 tinham uso
+    //Ring 1 - drivers de dispositivos 
+    //Ring 2 - servicos de sistema
+
+unsigned int prev_tss;                  //em sistemas de multitasking este e usado para guardar o TSS para ser possivel para voltar a tras
+    unsigned int esp0;                  //(esp0 - topo do stack) quando um programa ring 3faz um sys call, a CPU carrega automaticamente estes valorespara mudar para astack do kernel 
+    unsigned int ss0;                   //(ss0 - seletor do segmento em 0x10 dados Ring 0)
+    unsigned int esp1;                  //stacks do ring 1 e 2 (nao se usa)
+    unsigned int ss1;                   //stacks do ring 1 e 2
+    unsigned int esp2;                  //stacks do ring 1 e 2
+    unsigned int ss2;                   //stacks do ring 1 e 2
+    unsigned int cr3;                   //Page Directory Base - Em multitasking por hardware, cada tarefa tem o seu espaco de memoria virtual
+    unsigned int eip;                   //Instruction Pointers - Guarda o endereco da proxima instrucao no TSS pelo CPU
+    unsigned int eflags;                //Instruction Flags - Guarda o endereco da proxima instrucao na CPU
+    unsigned int eax;                   //Registos gerais, a CPU guardava aqui os registos de uma tarefa quando a suspendia
+    unsigned int ecx;                   //Registos gerais, a CPU guardava aqui os registos de uma tarefa quando a suspendia
+    unsigned int edx;                   //Registos gerais, a CPU guardava aqui os registos de uma tarefa quando a suspendia
+    unsigned int ebx;                   //Registos gerais, a CPU guardava aqui os registos de uma tarefa quando a suspendia
+    unsigned int esp;                   //Registos gerais, a CPU guardava aqui os registos de uma tarefa quando a suspendia
+    unsigned int ebp;                   //Registos gerais, a CPU guardava aqui os registos de uma tarefa quando a suspendia
+    unsigned int esi;                   //Registos gerais, a CPU guardava aqui os registos de uma tarefa quando a suspendia
+    unsigned int edi;                   //Registos gerais, a CPU guardava aqui os registos de uma tarefa quando a suspendia
+    unsigned int es;                    //Registos de Segmento - os seletores de segmento de tarefa em multitasking por hardware
+    unsigned int cs;                    //Registos de Segmento - os seletores de segmento de tarefa em multitasking por hardware
+    unsigned int ss;                    //Registos de Segmento - os seletores de segmento de tarefa em multitasking por hardware
+    unsigned int ds;                    //Registos de Segmento - os seletores de segmento de tarefa em multitasking por hardware
+    unsigned int fs;                    //Registos de Segmento - os seletores de segmento de tarefa em multitasking por hardware
+    unsigned int gs;                    //Registos de Segmento - os seletores de segmento de tarefa em multitasking por hardware
+    unsigned int ldt;                   //Local Decriptor Table - uma tarefa de descritores privada a cada tarefa
+    unsigned short trap;                //Trap Flag - se o bit 0 estiver a 1, o CPU lanca uma exepcao de debug antes de executar qualque intrucao
+    unsigned short iomap_base;          //I/O permision bitmap base - offset dentro do TSS onde comecao um mapa de bits que controla quais portos de I/O o programa em Ring 3 pode aceder diretamente
+
+    /*
+        O que vou usar (por enquanto) -> esp0 (stack do kernel para a Ring 3 -> Ring 0)
+                                      -> ss0 (seletor do segmento da stack do kernel)
+                                      -> iomap_base (bloquear acessoo a portos em Ring 3)
+    */
+} __attribute__ ((packed));
+
+struct TSS tss;
 
 static inline void outb(unsigned short porto, unsigned char valor) {
     //static inline - diz ao compilador para copiar esta função diretamente para onde e chamada
@@ -233,6 +277,7 @@ void kernel_main() {
 
     pic_init();
     idt_init();
+    configurarTSS();
     idt_set(0x21, (unsigned int) keyboard_handler);
 
     __asm__ volatile ("sti"); //liga interrupçoes 
@@ -499,4 +544,65 @@ void idt_init() {
         if (endB + tamB <= endA) return 0;
 
         return 1;
+    }
+
+    /*
+        Introducao ao Rings
+
+        O que sao? 
+        A CPU tem 4 niveis de privilegio, chamados de rings
+
+        Ring 0 -> kernel (acesso total ao hardware, memoria....)
+        Ring 1 -> nao usado em sistemas modernos
+        Ring 2 -> nao usado em sistemas modernos
+        Ring 3 -> User Mode (acesso restrito, nao toca no hardware)
+
+        Atualmente todos os programas ocorrem no Ring 0 (nivel mais priviligiado)
+        Um programa com bug pode corromper o kernel, aceder ao hardware diretamente
+        ou fazer o sistema parar.
+
+        O que muda com o Ring 3
+
+        O programa nao vai poder executar instrucoes priviligiadas (cli, sti, lgdt...)
+        Nao pode aceder ao portos de hardware (outb, inb)
+        Nao pode modificar as tabelas de paginas
+        Pode aceder a memoria que o kernel lhe deu
+        Pode fazer system calls para pedir coisas ao kernel
+
+        Se o programa tentar fazer algo proibido, o CPU lanca uma excecao e o kernel termina o programa
+
+        O que e preciso para implementar Ring 3
+
+        TSS (Task State Segment), estrutura que a CPU usa para mudar de Ring 3 para Rinf 0
+        Entradas na GDT para segmentos de Ring 3
+        Saltar para Ring 3 (instrucao especial)
+
+        TSS para saltar para o Ring 3, a CPU precisa de saber para onde voltar quando o programa fizer 
+        uma System Call ou der uma excepcao, ou seja, precisa de saber qual e a stack so kernel (Ring 0)
+
+        Essa info esta na TSS, esta tem muitos campos, mas so vai ser preciso preencher 2
+            ss0 -> seletor do segmento de stack de Ring 0 (0x10)
+           esp0 -> endereco do topo da stack de Ring 0
+    */
+
+    void configurarTSS() {
+        //Meter o TSS a zeros
+        unsigned char* p = (unsigned char*) &tss;
+        for (int i = 0; i < sizeof(tss); i++) {
+            p[i] = 0;
+        }
+
+        //preencher os campos que vou usar
+        tss.ss0 = 0x10;                     //seletor de segmento de dados Ring 0
+        tss.esp0 = 0x90000;                 //topo da stack do kernel
+        tss.iomap_base = sizeof(tss);       //bloquear acesso a portos em Ring 3
+
+        unsigned int base = (unsigned int) &tss;
+        tss_descriptor[2] = base & 0xFF;
+        tss_descriptor[3] = (base >> 8) & 0xFF;
+        tss_descriptor[4] = (base >> 16) & 0xFF;
+        tss_descriptor[7] = (base >> 24) & 0xFF;
+
+        __asm__ volatile ("ltr %0" : : "r"((unsigned short) 0x28));
+
     }
