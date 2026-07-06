@@ -2,9 +2,11 @@ section .text.boot              ;diz ao linker para colocar o .text.boot ficar n
 global inicio                   ;tornam estas duas funcoes visiveis fora deste ficheiro
 global keyboard_handler
 global tss_descriptor
-global saltarRing3     
+global saltarRing3 
+global syscallHandler    
 extern keyboard_handler_c       ;Diz ao assembler que estas funcoes estao noutro ficheiro
 extern kernel_main
+extern syscallHandlerC
 
 [bits 16]                   ;inicio do modo 16bits
 ;inicio da funcao inicio
@@ -140,3 +142,9 @@ saltarRing3:
     push 0x1B               ; cs - seletor codigo Ring 3
     push eax                ; eip - endereco passado como argumento
     iret                    ; restaura estes valores
+
+syscallHandler:
+    pusha
+    call syscallHandlerC
+    popa
+    iret

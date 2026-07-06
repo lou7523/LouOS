@@ -1,14 +1,20 @@
 extern void keyboard_handler();
 extern unsigned char tss_descriptor[];
 extern void saltarRing3(unsigned int eip);
+extern void syscallHandler();
 void pic_init();
 void idt_init();
 void idt_set(int numero, unsigned int handler);
+void idtSetType(int numero, unsigned int handler, unsigned char tipo);
 void imprimirNumero(int numero, int posicao);
 void scroll();
 void lerMapaMemoria();
 void inicializarMemoria();
 void configurarTSS();
+void handlerGPF();
+void pageFault();
+void doubleFault();
+void syscallHandlerC();
 unsigned int alocarPagina();
 void libertarPagina(unsigned int endereco);
 int verificarColisao(unsigned int endA, unsigned int tamA, unsigned int endB, unsigned int tamB);
@@ -261,6 +267,10 @@ void kernel_main() {
 
     pic_init();
     idt_init();
+    idt_set(8, (unsigned int) doubleFault);
+    idt_set(13, (unsigned int) handlerGPF);
+    idt_set(14, (unsigned int) pageFault);
+    idtSetType(0x80, (unsigned int) syscallHandler, 0xEE);
     configurarTSS();
     idt_set(0x21, (unsigned int) keyboard_handler);
 
@@ -341,6 +351,14 @@ void idt_set(int numero, unsigned int handler) {
     idt[numero].zero = 0;
     idt[numero].tipo = 0x8E;                                //Este vai dizer a CPU que tipo de entrada é, esta tem sempre o valor fixo de 0x8E;
     idt[numero].enderecoAlto = (handler >> 16) & 0xFFFF;    //desloca o endereco 16 bits para a direita, ficando com os ultimos 16bits
+}
+
+void idtSetType(int numero, unsigned int handler, unsigned char tipo) {
+    idt[numero].enderecoBaixo = handler & 0xFFFF;
+    idt[numero].selector = 0x08;
+    idt[numero].zero = 0;
+    idt[numero].tipo = tipo;
+    idt[numero].enderecoAlto = (handler >> 16) & 0xFFFF;
 }
 
 void idt_init() {
@@ -589,4 +607,58 @@ void idt_init() {
 
         __asm__ volatile ("ltr %0" : : "r"((unsigned short) 0x28));
 
+    }
+
+    void handlerGPF() {
+        char* video = (char*) 0xB8000;
+        char* msg = "ERRO: general protection fault";
+        int i = 0;
+        while (msg[i]) {
+            video[i * 2] = msg[i];
+            video[i * 2 + 1] = 0x4F;
+            i++;
+        }
+        while (1);
+    }
+
+    void pageFault() {
+        char* video = (char*) 0xB8000;
+        char* msg = "ERRO: page fault";
+        int i = 0;
+        while (msg[i]) {
+            video[i * 2] = msg[i];
+            video[i * 2 + 1] = 0x4F;
+            i++;
+        }
+        while(1);
+
+    }
+
+    void doubleFault() {
+        char* video = (char*) 0xB8000;
+        char* msg = "ERRO: double fault";
+        int i = 0;
+        while (msg[i]) {
+            video[i * 2] = msg[i];
+            video[i * 2 + 1] = 0x4F;
+            i++;
+        }
+        while(1);
+
+    }
+
+    void syscallHandlerC() {
+        unsigned int syscallNum;
+        __asm__ volatile ("mov %%eax, %0" : "=r"(syscallNum));
+
+        if (syscallNum == 1) { 
+            char* video = (char*) 0xB8000;
+            char* msg = "Syscall";
+            int i = 0;
+            while (msg[i]) {
+                video[i * 2] = msg[i];
+                video[i * 2 + 1] = 0x4F;
+                i++;
+            }
+        }
     }
