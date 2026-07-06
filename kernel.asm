@@ -1,7 +1,8 @@
 section .text.boot              ;diz ao linker para colocar o .text.boot ficar no inicio do binario final
 global inicio                   ;tornam estas duas funcoes visiveis fora deste ficheiro
 global keyboard_handler
-global tss_descriptor         
+global tss_descriptor
+global saltarRing3     
 extern keyboard_handler_c       ;Diz ao assembler que estas funcoes estao noutro ficheiro
 extern kernel_main
 
@@ -124,3 +125,18 @@ gdt_fim:
 gdt_descriptor:
     dw gdt_fim - gdt_inicio - 1     ; tamanho do GDT
     dd gdt_inicio                   ; Endereco do GDT
+
+saltarRing3:
+    mov eax, [esp + 4]
+    mov bx, 0x23            ; seleciona o Ring 3
+    mov ds, bx
+    mov es, bx
+    mov fs, bx
+    mov gs, bx
+
+    push 0x23               ; ss - stack segment Ring 3
+    push 0x7FF000           ; esp - stack do programa em Ring 3
+    pushf                   ; eflgas - flags atuais
+    push 0x1B               ; cs - seletor codigo Ring 3
+    push eax                ; eip - endereco passado como argumento
+    iret                    ; restaura estes valores

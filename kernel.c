@@ -1,5 +1,6 @@
 extern void keyboard_handler();
 extern unsigned char tss_descriptor[];
+extern void saltarRing3(unsigned int eip);
 void pic_init();
 void idt_init();
 void idt_set(int numero, unsigned int handler);
@@ -128,7 +129,7 @@ static inline unsigned char inb(unsigned short porto) {
     return resultado;
 }
 
-int carregarElf(unsigned char* elf) {
+unsigned int carregarElf(unsigned char* elf) {
     struct elfHeader* header = (struct elfHeader*) elf; //elf e um ponteiro para bytes,e em vez de ler um a um manualmente convertemos para elfHeader
                                                         //para o codigo ser mais facil de manter e mudar
     if (header->magico[0] != 0x7F || header->magico[1] != 'E' || header->magico[2] != 'L' || header->magico[3] != 'F') {    //Lei de Morgan
@@ -167,25 +168,7 @@ int carregarElf(unsigned char* elf) {
         }
     }
 
-    void (*entrada)() = (void (*)()) header->entryPoint;    /*
-                                                                header->entryPoint:
-                                                                    - Numero onde o endereco de memoria comeca. No programa.elf é
-                                                                      0x400024.
-                                                                    
-                                                                (void (*)()):
-                                                                    - É um cast que converte o numero desse ponteiro para uma funcao
-
-                                                                void (*entrada)():
-                                                                    - Declara uma variavel chamada entrada que é um ponteiro para uma 
-                                                                      funcao.
-
-                                                                    entrada():
-                                                                    - Chama a funcao que está no endereco guardado em entrada, ou seja,
-                                                                      vai para 0x400024 e comeca a executar o programa
-                                                            */
-    entrada();
-
-    return 1;
+    return header->entryPoint;                  //devolvo o endereco
 
 }
 
@@ -217,7 +200,8 @@ void executarPrograma() {
         lerSector(22 + i, buffer + i * 512);
     }
 
-    carregarElf(buffer);
+    unsigned int entryPoint = carregarElf(buffer);
+    saltarRing3(entryPoint);
 }
 
     void inicializarPaginacao() {
@@ -225,14 +209,14 @@ void executarPrograma() {
             pageDirectory[i] = 0;           //loop for que limpa todas as entradas do PageDirectpry
     }
         for (int j = 0; j < 1024; j++) {                    //preenche as duas primeiras Page Tables (8MB)
-            pageTables[0][j] = (j * 4096) | 0x03;           //mapeia as paginas de 0-1023
-            pageTables[1][j] = ((1024 + j) * 4096) | 0x03;  //mapeia as paginas de 1024-2047
+            pageTables[0][j] = (j * 4096) | 0x07;           //mapeia as paginas de 0-1023
+            pageTables[1][j] = ((1024 + j) * 4096) | 0x07;  //mapeia as paginas de 1024-2047
 
-            //0x03 -> Este vai adicionar flags: bit 0 = 1 -> presente; bit 1 = 1 -> writable
+            //0x07 -> Este vai adicionar flags: bit 0 = 1 -> presente; bit 1 = 1 -> writable; bit 2 = 1 -> acessivel em Ring 3
         }
 
-        pageDirectory[0] = (unsigned int) pageTables[0] | 0x03; //Liga as duas PageTables ao Page Directory
-        pageDirectory[1] = (unsigned int) pageTables[1] | 0x03;
+        pageDirectory[0] = (unsigned int) pageTables[0] | 0x07; //Liga as duas PageTables ao Page Directory
+        pageDirectory[1] = (unsigned int) pageTables[1] | 0x07;
 
         __asm__ volatile ("mov %0, %%cr3" : : "r"(pageDirectory));  //Carrega o endereco do cr3, o registo especial da CPU que guarda onde esta o page directory.
                                                                     //Sem isto o CPU nao sabe onde procurar tabelas
