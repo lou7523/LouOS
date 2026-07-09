@@ -83,6 +83,10 @@ encontrou_kernel:
     mov ax, [si + 26]                   ; cluster baixo
     mov [clusterAtual], eax             ; guarda o cluster atual (so corre aqui, 1a vez, a partir da entrada de diretorio em [si])
 
+    mov bx, 0x8000                      ; endereco de destino na RAM onde o kernel vai ser carregado
+                                         ; fica fora do loop para nao ser reposto a cada cluster - senao cada cluster
+                                         ; novo apagava o anterior e so o ultimo cluster do ficheiro sobrevivia
+
 carregar_cluster:                       ; CORRIGIDO: novo label - alvo do loop em vez de "encontrou_kernel"
                                          ; assim o loop deixa de voltar a ler [si] (que so tem o 1o cluster) e usa o cluster ja actualizado pela FAT
     mov eax, [clusterAtual]             ; carrega o cluster atual em EAX (1a vez: veio de [si]; seguintes: veio da FAT)
@@ -91,7 +95,6 @@ carregar_cluster:                       ; CORRIGIDO: novo label - alvo do loop e
     mul ecx                             ; (cluster - 2) * sectorsPerCluster = offset desde o inicio da area de dados
     add eax, [dataStart]                ; soma o inicio da area de dados para obter o sector absoluto do disco
 
-    mov bx, 0x8000                      ; endereco de destino na RAM onde o kernel vai ser carregado
     movzx ecx, byte [sectsPerCluster]   ; numero de sectores a ler (um cluster inteiro)
 
 ler_cluster:
@@ -113,8 +116,10 @@ ler_cluster:
 
     add eax, [fatStart]         ; sector absoluto de FAT
     push edx                    ; guarda o offset
+    push bx                     ; guarda o ponteiro de destino do kernel (BX e reutilizado a seguir para o buffer da FAT)
     mov bx, 0x6000              ; le o sector da FAT para 0x6000 (temporario)
     call lerSectores
+    pop bx                      ; restaura o ponteiro de destino do kernel, senao o proximo cluster era escrito em 0x6000
     pop edx                     ; restaura o offset
 
     mov eax, [0x6000 + edx]     ; le o proximo cluster

@@ -16,12 +16,12 @@ void pageFault();
 void doubleFault();
 void syscallHandlerC();
 unsigned int alocarPagina();
+unsigned int lerFicheiro(char* nome, unsigned char* destino);   //le um ficheiro do FAT32 (por nome 8.3) para "destino", devolve o tamanho ou 0 se nao encontrar
 void libertarPagina(unsigned int endereco);
 int verificarColisao(unsigned int endA, unsigned int tamA, unsigned int endB, unsigned int tamB);
 typedef unsigned int entradaPagina;
 entradaPagina pageDirectory[1024] __attribute__((aligned(4096)));
-entradaPagina pageTables[1024][1024] __attribute__((aligned(4096)));
-
+entradaPagina pageTables[2][1024] __attribute__((aligned(4096)));   //so 2 Page Tables (8MB mapeados) em vez de 1024 - as outras 1022 nunca eram usadas e inchavam o kernel.bin em ~4MB (ficava tudo no .bss, e o "ld --oformat binary" escreve o .bss todo como zeros no binario)
 
 
 #define TamanhoPagina 4096          //4KB, pois este e o valor definido pela arquitetura x86
@@ -201,9 +201,15 @@ void lerSector(unsigned int lba, unsigned char* destino) {
 }
 
 void executarPrograma() {
-    unsigned char buffer[8192];
-    for (int i = 0; i < 16; i++) {
-        lerSector(22 + i, buffer + i * 512);
+    unsigned char buffer[65536];   //64KB, espaco suficiente para o PROGRAMA.ELF inteiro (antes lia-se so 16 sectores fixos, 8KB, direto do disco)
+
+    unsigned int tamanho = lerFicheiro("PROGRAMAELF", buffer);   //vai procurar e copiar PROGRAMA.ELF do FAT32 para o buffer
+
+    if (tamanho == 0) {                 //ficheiro nao encontrado no root directory
+        char* video = (char*) 0xB8000;
+        video[0] = '?';                 //escreve um '?' vermelho no canto superior esquerdo do ecra como indicador de erro
+        video[1] = 0x4F;
+        return;
     }
 
     unsigned int entryPoint = carregarElf(buffer);
@@ -274,7 +280,7 @@ void kernel_main() {
     configurarTSS();
     idt_set(0x21, (unsigned int) keyboard_handler);
 
-    __asm__ volatile ("sti"); //liga interrupçoes 
+    __asm__ volatile ("sti"); //liga interrupçoes
     //sem isto o CPU vai ignorar o PIC, mesmo com o IDT inicializado corretamente
 
     executarPrograma();
@@ -651,7 +657,7 @@ void idt_init() {
         unsigned int syscallNum;
         __asm__ volatile ("mov %%eax, %0" : "=r"(syscallNum));
 
-        if (syscallNum == 1) { 
+        if (syscallNum == 1) {
             char* video = (char*) 0xB8000;
             char* msg = "Syscall";
             int i = 0;
@@ -684,7 +690,7 @@ void idt_init() {
         unsigned short numHeads;            //Tambem nao é relevante pois usamos LBA
         unsigned int hiddenSectors;         //Sectores ocultos quantos sectores existem antes da particao do disco
         unsigned int totalSectors32;        //Numero total de sectores do volume. Usa-se para saber o tamanho total do disco
-        unsigned int sectorspPerFAT32;      //Quantos sectores ocupa cada copia de FAT 
+        unsigned int sectorsPerFAT32;      //Quantos sectores ocupa cada copia de FAT 
                                             //inicio da area de dados = reservedSectors + (numFATs * sectorsPerFAT32)   
         unsigned short extFlags;            //Controla qual FAT esta ativa (main / copy)
         unsigned short fsVersion;           //Versao do Filesystem (0x0000) normalmente 0.0
@@ -710,3 +716,79 @@ void idt_init() {
             Tudo o resto e legado, cosmetico ou para compatibilidade
         */
     } __attribute__((packed));
+
+    struct FAT32DirEntry {
+        unsigned char nome[8];          //Nome do ficheiro
+        unsigned char ext[3];           //extensao (.txt .pdf .jpg)
+        unsigned char atributos;        //tipo de entrada (ficheiro, pasta)
+        unsigned char ignorados1[8];    //campos nao usados
+        unsigned short clusterAlto;     //16 bits superiores do cluster
+        unsigned char ignorado2[4];     //campos nao usados
+        unsigned short clusterBaixo;    //16 bits inferiores do cluster
+        unsigned int tamanho;           //tamanho do ficheiro em bytes
+        //Cluster - É um grupo de entradas de sectores consecutivos no disco, é a unidade minima de alocacao de ficheiros FAT32
+
+    } __attribute__ ((packed)); 
+
+    unsigned int lerFicheiro(char* nome, unsigned char* destino) {
+        //Le um ficheiro do root directory do FAT32 pelo nome 8.3 (ex: "PROGRAMAELF", sem ponto nem espacos)
+        //e copia todo o seu conteudo, cluster a cluster, para "destino". Devolve o tamanho do ficheiro em bytes, ou 0 se nao encontrar.
+
+        unsigned char buffer[512];
+        lerSector(0, buffer);                  //le o boot sector (sector 0) para conseguir os parametros do filesystem
+
+        struct FAT32BootSector* bs = (struct FAT32BootSector*) buffer;
+
+        unsigned int fatStart = bs->reservedSectors;                                      //1o sector da FAT
+        unsigned int dataStart = bs->reservedSectors + bs->numFAT * bs->sectorsPerFAT32;   //1o sector da area de dados (depois das copias de FAT)
+        unsigned int sectorsPerCluster = bs->sectorsPerCluster;                            //guardado numa variavel local - "buffer" (e por isso "bs") vai ser reescrito a seguir com o root directory,
+                                                                                            //e sem isto o codigo mais abaixo ia ler este campo de bytes de uma entrada de diretorio em vez do boot sector
+
+        unsigned int sectorRaiz = dataStart + (bs->rootCluster - 2) * sectorsPerCluster;  //sector do cluster 2 (root directory) - o -2 e porque os clusters 0 e 1 sao reservados
+        lerSector(sectorRaiz, buffer);          //le o 1o sector do root directory (16 entradas de 32 bytes, ja que buffer tem 512 bytes)
+                                                 //isto sobrescreve o boot sector no buffer - dai termos guardado sectorsPerCluster antes
+
+        struct FAT32DirEntry* dir = (struct FAT32DirEntry*) buffer;
+
+        for(int i = 0; i < 16; i++) {           //percorre as 16 entradas do sector a comparar com o nome pedido
+            int encontrou = 1;
+            for (int j = 0; j < 11; j++) {      //compara byte a byte os 11 bytes do formato 8.3 (8 do nome + 3 da extensao)
+                unsigned char byteDir;
+                if (j < 8) {
+                    byteDir = dir[i].nome[j];
+                } else {
+                    byteDir = dir[i].ext[j - 8];
+                }
+                if (byteDir != nome[j]) {
+                    encontrou = 0;
+                    break;
+                }
+            }
+
+            if (encontrou) {
+                unsigned int cluster = ((unsigned int) dir[i].clusterAlto << 16) | dir[i].clusterBaixo;  //junta os 16 bits altos e baixos no cluster inicial do ficheiro
+                unsigned int tamanho = dir[i].tamanho;
+
+                unsigned int bytesCopiados = 0;
+
+                while (cluster < 0x0FFFFFF8) {     //0x0FFFFFF8 e mais e o marcador de fim de cadeia (EOF) na FAT32
+                    unsigned int sector = dataStart + (cluster - 2) * sectorsPerCluster;   //sector absoluto de disco onde comeca este cluster
+
+                    for (int x = 0; x < sectorsPerCluster; x++) {      //copia todos os sectores do cluster para o destino, sector a sector
+                        lerSector(sector + x, destino + bytesCopiados);
+                        bytesCopiados += 512;
+                    }
+
+                    unsigned char fatBuffer[512];
+                    unsigned int fatSector = fatStart + (cluster * 4) / 512;   //cada entrada da FAT32 ocupa 4 bytes, por isso *4 para obter o offset em bytes e /512 para saber o sector
+                    unsigned int fatOffset = (cluster * 4) % 512;              //offset dentro desse sector onde esta a entrada
+                    lerSector(fatSector, fatBuffer);
+                    cluster =*(unsigned int*)(fatBuffer + fatOffset) & 0x0FFFFFFF;    //le o proximo cluster da cadeia (mascara os 4 bits superiores, reservados)
+                }
+
+                return tamanho;
+            }
+        }
+
+        return 0;      //nao encontrou nenhuma entrada com o nome pedido
+    }
