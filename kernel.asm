@@ -3,10 +3,12 @@ global inicio                   ;tornam estas duas funcoes visiveis fora deste f
 global keyboard_handler
 global tss_descriptor
 global saltarRing3 
-global syscallHandler    
+global syscallHandler
+global timer_handler    
 extern keyboard_handler_c       ;Diz ao assembler que estas funcoes estao noutro ficheiro
 extern kernel_main
 extern syscallHandlerC
+extern timerHandler
 
 [bits 16]                   ;inicio do modo 16bits
 ;inicio da funcao inicio
@@ -76,6 +78,14 @@ keyboard_handler:
     mov al, 0x20                ; Avisa o PIC que terminamos a interrupcao
     out 0x20, al                ; permite-nos avancar para a prox
     iret                        ; restaura o EIP, CS e EFLAGS
+
+timer_handler:
+    pusha
+    call timerHandler
+    popa
+    mov al, 0x20
+    out 0x20, al
+    iret
 
 ; GDT - Global Descriptor Table
 gdt_inicio:

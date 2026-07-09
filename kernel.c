@@ -2,7 +2,8 @@ extern void keyboard_handler();
 extern unsigned char tss_descriptor[];
 extern void saltarRing3(unsigned int eip);
 extern void syscallHandler();
-void pic_init();
+extern void timer_handler();
+void pic_init(int frequencia);
 void idt_init();
 void idt_set(int numero, unsigned int handler);
 void idtSetType(int numero, unsigned int handler, unsigned char tipo);
@@ -15,6 +16,8 @@ void handlerGPF();
 void pageFault();
 void doubleFault();
 void syscallHandlerC();
+void pit_init(int frequencia);
+void timerHandler();
 unsigned int alocarPagina();
 unsigned int lerFicheiro(char* nome, unsigned char* destino);   //le um ficheiro do FAT32 (por nome 8.3) para "destino", devolve o tamanho ou 0 se nao encontrar
 void libertarPagina(unsigned int endereco);
@@ -70,7 +73,7 @@ struct programHeader {                  //estrutura do program header
     unsigned int align;                 //Alinhamento do segmento de memoria
 } __attribute__ ((packed));
 
-struct TSS {
+struct TSS {    //Task State Segment
     //originalmente o Ring 1 e 2 tinham uso
     //Ring 1 - drivers de dispositivos 
     //Ring 2 - servicos de sistema
@@ -216,7 +219,7 @@ void executarPrograma() {
     saltarRing3(entryPoint);
 }
 
-    void inicializarPaginacao() {
+void inicializarPaginacao() {
         for (int i = 0; i < 1024; i++) {
             pageDirectory[i] = 0;           //loop for que limpa todas as entradas do PageDirectpry
     }
@@ -271,11 +274,13 @@ void kernel_main() {
     inicializarPaginacao();
     lerMapaMemoria();
 
-    pic_init();
+    pic_init(100);
+    pit_init(100); 
     idt_init();
     idt_set(8, (unsigned int) doubleFault);
     idt_set(13, (unsigned int) handlerGPF);
     idt_set(14, (unsigned int) pageFault);
+    idt_set(0x20, (unsigned int) timer_handler);
     idtSetType(0x80, (unsigned int) syscallHandler, 0xEE);
     configurarTSS();
     idt_set(0x21, (unsigned int) keyboard_handler);
@@ -288,7 +293,7 @@ void kernel_main() {
     while(1);
 }
 
-void pic_init() {
+void pic_init(int frequencia) {
     //ICW1- Inicia o remapeamento outb - OutputByte
     outb(0x20, 0x11); // 0x20 e o ponto PIC mestre, 0x11 significa que vai dar movas instrucoes, prepara-te
     outb(0xA0, 0x11); // 0x0A e o porto PIC escravo, 0x11 significa que vai dar movas instrucoes, prepara-te
@@ -301,8 +306,8 @@ void pic_init() {
     //ICW4 - modo 8086 (modo normal de 32bits)
     outb(0x21, 0x01); //Mete o mestre em modo de 32-bits
     outb(0xA1, 0x01); //Mete o escravo em modo de 32-bits
-    //Máscaras - bloquear tudo excepto o teclado, este e um byte onde cada bit corresponde a uma IRQ 0 = permitir 1 = bloquear
-    outb(0x21, 0xFD); //0xFD em binario e 1111 1101, onde o bit 1 e 0 - IRQ1 é permitida. Tudo o resto e bloqueado
+    //Máscaras - bloquear tudo excepto o teclado e o timer, este e um byte onde cada bit corresponde a uma IRQ 0 = permitir 1 = bloquear
+    outb(0x21, 0xFC); //0xFC em binario e 1111 1100, onde o bit 1 e 0 e o bit 0 e 0 - IRQ1 e o IRQ0 (teclado e timer) sao os unicos permitidos o resto e bloqueado
     outb(0xA1, 0xFF); //0xFF bloqueia todas as IRQs do PIC escravo
     
     /*
@@ -791,4 +796,31 @@ void idt_init() {
         }
 
         return 0;      //nao encontrou nenhuma entrada com o nome pedido
+    }
+
+    /*
+        Configuracao do PIT (Programmable Interval Timer)
+
+        O PIT está nos portos 0x40-0x43. O porto 0x40 é o channel 0 - o que esta ligado a linha IRQ0
+
+        O PIT corre a uma frequencia de base fixa de 1193182Hz (1.19MHz), nao se defini a frequecia diretamente, mas sim
+        um divisor: divisor = 1193182 / frequenciaDesejada; 
+        Ex:
+            Se eu quiser 100 inteerrupcoes por segundo (100Hz) -> divisor = 1193182 / 100 = 11931
+
+        Para configurar, temos de escrever primeiro um byte de comando no porto 0x43 (0x36 e o valor standard para "channel 0, modo 3 - square wave,
+        acesso lo+hi byte"), depois escreve-se o divisor em 2 passos no porto 0x40: primeiro o byte baixo e depois o byte alto
+    */
+
+    void pit_init(int frequencia) {
+        outb(0x43, 0x36);
+        unsigned int divisor = 1193182 / frequencia;
+        outb(0x40, divisor);
+        outb(0x40, divisor >> 8);
+    }   
+
+    int contadorTicks = 0;
+    void timerHandler() {
+            imprimirNumero(contadorTicks, 50);
+            contadorTicks++;
     }
