@@ -81,7 +81,9 @@ keyboard_handler:
 
 timer_handler:
     pusha
+    push esp            ; passa o esp (ponteiro para os registos) como argumento
     call timerHandler
+    add esp, 4          ; limpa o argumento da stack
     popa
     mov al, 0x20
     out 0x20, al

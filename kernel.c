@@ -3,6 +3,31 @@ extern unsigned char tss_descriptor[];
 extern void saltarRing3(unsigned int eip);
 extern void syscallHandler();
 extern void timer_handler();
+
+struct registos {                                   //struct que vai guardar o registo de um processo (multitasking)
+        unsigned int edi;                           
+        unsigned int esi;
+        unsigned int ebp;
+        unsigned int esp;
+        unsigned int ebx;
+        unsigned int edx;
+        unsigned int ecx;
+        unsigned int eax;
+        unsigned int eip;
+        unsigned int cs;
+        unsigned int eflags;
+    } __attribute__ ((packed));
+    
+struct processos {
+        unsigned int estado; //0 = bloqueia  1 = permite
+        unsigned int enderecoProcesso; //Para saber onde esta cada endereco na stack
+        unsigned int cr3; //0x07
+        struct registos registos; //adiciona a struct registos dentro de processos
+    };
+
+struct processos processos[4];  //declara que pode haver ate 4 processos em simultaneo
+int processoAtual = 0;          //o processo atual esta em 0
+void saltarParaProcesso(struct registos* r);
 void pic_init(int frequencia);
 void idt_init();
 void idt_set(int numero, unsigned int handler);
@@ -17,7 +42,7 @@ void pageFault();
 void doubleFault();
 void syscallHandlerC();
 void pit_init(int frequencia);
-void timerHandler();
+void timerHandler(struct registos* r);
 unsigned int alocarPagina();
 unsigned int lerFicheiro(char* nome, unsigned char* destino);   //le um ficheiro do FAT32 (por nome 8.3) para "destino", devolve o tamanho ou 0 se nao encontrar
 void libertarPagina(unsigned int endereco);
@@ -203,10 +228,15 @@ void lerSector(unsigned int lba, unsigned char* destino) {
     }
 }
 
+
 void executarPrograma() {
-    unsigned char buffer[65536];   //64KB, espaco suficiente para o PROGRAMA.ELF inteiro (antes lia-se so 16 sectores fixos, 8KB, direto do disco)
+    unsigned char* buffer = (unsigned char*) alocarPagina();
+    for (int i = 0; i < 15; i++) alocarPagina();    //reserva mais 15 paginas seguidas (total 64KB), pois um ficheiro ELF pode ocupar mais que uma pagina (4KB) e sem isto o lerFicheiro escreve para la do buffer, invadindo o buffer1
+    unsigned char* buffer1 = (unsigned char*) alocarPagina();
+    for (int i = 0; i < 15; i++) alocarPagina();    //reserva mais 15 paginas seguidas (total 64KB) para o mesmo efeito
 
     unsigned int tamanho = lerFicheiro("PROGRAMAELF", buffer);   //vai procurar e copiar PROGRAMA.ELF do FAT32 para o buffer
+    unsigned int tamanho1 = lerFicheiro("PROGRAM2ELF", buffer1);   //vai procurar e copiar PROGRAM2.ELF do FAT32 para o buffer (nome curto: "programa1.elf" tinha 9 chars no nome base e o FAT32 mangla-o em "PROGRA~1", nao correspondendo)
 
     if (tamanho == 0) {                 //ficheiro nao encontrado no root directory
         char* video = (char*) 0xB8000;
@@ -214,6 +244,20 @@ void executarPrograma() {
         video[1] = 0x4F;
         return;
     }
+
+    processos[0].estado = 1;
+    processos[0].enderecoProcesso = 0x7FF000;
+    processos[0].cr3 = (unsigned int) pageDirectory;
+
+    unsigned int entryPoint1 = carregarElf(buffer1);
+
+    processos[1].estado = 1;
+    processos[1].enderecoProcesso = 0x7FE000;
+    processos[1].cr3 = (unsigned int) pageDirectory;
+    processos[1].registos.eip = entryPoint1;
+    processos[1].registos.esp = 0x7FE000;
+    processos[1].registos.cs = 0x1B;
+    processos[1].registos.eflags = 0x200;
 
     unsigned int entryPoint = carregarElf(buffer);
     saltarRing3(entryPoint);
@@ -812,15 +856,56 @@ void idt_init() {
         acesso lo+hi byte"), depois escreve-se o divisor em 2 passos no porto 0x40: primeiro o byte baixo e depois o byte alto
     */
 
-    void pit_init(int frequencia) {
+    void pit_init(int frequencia) {                 
         outb(0x43, 0x36);
         unsigned int divisor = 1193182 / frequencia;
         outb(0x40, divisor);
         outb(0x40, divisor >> 8);
     }   
 
-    int contadorTicks = 0;
-    void timerHandler() {
-            imprimirNumero(contadorTicks, 50);
-            contadorTicks++;
+    void timerHandler(struct registos* r) {
+        processos[processoAtual].registos = *r;
+        int proximoProcesso = (processoAtual + 1) % 4;    //Utilizacao do round-robin
+        /*
+            Ha um problema se o processo atual avancar para o processo 1, 2 ou 3, mas estes ainda nao estao inicializados vai crashar o sistema
+            logo metemos esta condicao if que so troca de processo quando o ProximoProcesso estiver ativo. Se nao continua o processo atual
+        */
+        if (processos[proximoProcesso].estado == 1) {   
+            processoAtual = proximoProcesso;
+            outb(0x20, 0x20);       //EOI antes de saltar - sem isto o PIC bloqueia e fica a espera do EOI, e nunca dispara o IRQ0
+            saltarParaProcesso(&processos[processoAtual].registos);
+        }
+    }
+
+    /*
+        O que e o round robin?
+
+        Round-Robin é um algoritmo de schedulling que aloca "fatias de tempo" (time slices)
+        a processos numa ordem circular, para garantir a equidade entre processos, 
+        ou seja, para que cada processo receba a sua "atencao" da
+        CPU de forma justa, e que nenhum processo fique a espera indefinidamente (starvation - nome que se da
+        a um processo que fica a espera indefinidamente)
+
+    */
+
+
+    void saltarParaProcesso(struct registos* r) {                 //A stack funciona em modo LIFO - Last In, Fisrt Out              
+        __asm__ volatile (
+            "mov %0, %%eax\n"           //copia o ponteiro r, endereco da struct registos do processo a retomar, para o registo eax. A partir daqui, eax aponta para o inicio da struct
+            "push $0x23\n"
+            "push 12(%%eax)\n"
+            "push 40(%%eax)\n"          //le cada campo da struct pelo seu offset e empurra para a stack. Lembrando que a stack cresce para baixo (eflags fica no fundo)
+            "push 36(%%eax)\n"          
+            "push 32(%%eax)\n"         
+            "push 28(%%eax)\n"
+            "push 24(%%eax)\n"
+            "push 20(%%eax)\n"
+            "push 16(%%eax)\n"
+            "push 12(%%eax)\n"
+            "push 8(%%eax)\n"
+            "push 4(%%eax)\n"
+            "push 0(%%eax)\n"           //edi, fica no topo
+            "popa\n"                    //retira os 8 registos gerais do topo da stack, edi - eax e restaura-os nos registos da CPU
+            "iret\n" : : "r"(r)         //iret vai retirar o eip, cs e o eflags da stack e vai restaura-los, fazendo a CPU saltar para o eip
+        );
     }
