@@ -234,9 +234,16 @@ void executarPrograma() {
     for (int i = 0; i < 15; i++) alocarPagina();    //reserva mais 15 paginas seguidas (total 64KB), pois um ficheiro ELF pode ocupar mais que uma pagina (4KB) e sem isto o lerFicheiro escreve para la do buffer, invadindo o buffer1
     unsigned char* buffer1 = (unsigned char*) alocarPagina();
     for (int i = 0; i < 15; i++) alocarPagina();    //reserva mais 15 paginas seguidas (total 64KB) para o mesmo efeito
+    unsigned char* buffer2 = (unsigned char*) alocarPagina();
+    for (int i = 0; i < 15; i++) alocarPagina();    //reserva mais 15 paginas seguidas (64KB) para o mesmo efeito
+    unsigned char* buffer3 = (unsigned char*) alocarPagina();
+    for(int i = 0; i < 15; i++) alocarPagina();
 
     unsigned int tamanho = lerFicheiro("PROGRAMAELF", buffer);   //vai procurar e copiar PROGRAMA.ELF do FAT32 para o buffer
-    unsigned int tamanho1 = lerFicheiro("PROGRAM2ELF", buffer1);   //vai procurar e copiar PROGRAM2.ELF do FAT32 para o buffer (nome curto: "programa1.elf" tinha 9 chars no nome base e o FAT32 mangla-o em "PROGRA~1", nao correspondendo)
+    unsigned int tamanho1 = lerFicheiro("PROGRAM1ELF", buffer1);   //vai procurar e copiar PROGRAM1.ELF do FAT32 para o buffer
+    unsigned int tamanho2 = lerFicheiro("PROGRAM2ELF", buffer2);   //vai procurar e copiar PROGRAM2.ELF do FAT32 para o buffer
+    unsigned int tamanho3 = lerFicheiro("PROGRAM3ELF", buffer3);   //vai procurar e copiar PROGRAM3.ELF do FAT32 para o buffer
+
 
     if (tamanho == 0) {                 //ficheiro nao encontrado no root directory
         char* video = (char*) 0xB8000;
@@ -251,13 +258,31 @@ void executarPrograma() {
 
     unsigned int entryPoint1 = carregarElf(buffer1);
 
-    processos[1].estado = 1;
-    processos[1].enderecoProcesso = 0x7FE000;
-    processos[1].cr3 = (unsigned int) pageDirectory;
-    processos[1].registos.eip = entryPoint1;
-    processos[1].registos.esp = 0x7FE000;
-    processos[1].registos.cs = 0x1B;
-    processos[1].registos.eflags = 0x200;
+    processos[1].estado = 1;                                //estado do processo 1 1 = permitido 0 = bloqueado
+    processos[1].enderecoProcesso = 0x7FE000;               //endereco do processo
+    processos[1].cr3 = (unsigned int) pageDirectory;        //define o espaco de memoria virtual
+    processos[1].registos.eip = entryPoint1;                //endereco da proxima intrucao a executar
+    processos[1].registos.esp = 0x7FE000;                   //topo da stack Ring 3 quando o processo comecar a decorrer
+    processos[1].registos.cs = 0x1B;                        //seletor de codigo Ring3
+    processos[1].registos.eflags = 0x200;                   //bit de interrupcao ativo, sem isto nao da para parar o processo
+
+    unsigned int entryPoint2 = carregarElf(buffer2);
+    processos[2].estado = 1;
+    processos[2].enderecoProcesso = 0x7FD000;
+    processos[2].cr3 = (unsigned int) pageDirectory;
+    processos[2].registos.eip = entryPoint2;
+    processos[2].registos.esp = 0x7FD000;
+    processos[2].registos.cs = 0x1B;
+    processos[2].registos.eflags = 0x200;
+
+    unsigned int entryPoint3 = carregarElf(buffer3);
+    processos[3].estado = 1;
+    processos[3].enderecoProcesso = 0xFC000;
+    processos[3].cr3 = (unsigned int) pageDirectory;
+    processos[3].registos.eip = entryPoint3;
+    processos[3].registos.esp = 0x7FC000;
+    processos[3].registos.cs = 0x1B;
+    processos[3].registos.eflags = 0x200;
 
     unsigned int entryPoint = carregarElf(buffer);
     saltarRing3(entryPoint);
