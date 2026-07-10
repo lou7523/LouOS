@@ -50,6 +50,18 @@ fim_mapa:
     mov [di+12],    eax
     mov [di+16],    eax
 
+    xor ax, ax              ; mete ax a 0
+    mov es, ax              ; mete es com o valor de ax
+    mov ax, 0x4F01          ; mete ax em modo get more info
+    mov cx, 0x4115          ; numero do modo 800x600
+    mov di, 0x7000          ; endereco onde a bios vai escrever a estrutura VBE Mode Info
+    int 0x10                ; executa
+
+    mov ax, 0x4F02          ; mete ax em modo set video mode
+    mov bx, 0x4115          ; o numero do modo
+    or bx, 0x4000           ; mete o framebuffer em modo linear
+    int 0x10
+
     o32 lgdt [gdt_descriptor]       ; Carrega o GDT na CPU
     mov eax, cr0                    ; cr0 e um registo para o controlo da CPU, o bit 0 = PE (Protection Enable), e ativa-lo e o que liga o modo 32 bits
     or eax, 1                       ; vai ler esse bit
