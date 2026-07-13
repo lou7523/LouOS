@@ -43,8 +43,11 @@ void doubleFault();
 void syscallHandlerC();
 void pit_init(int frequencia);
 void timerHandler(struct registos* r);
+void mapearFrameBuffer(unsigned int fb);
 unsigned int alocarPagina();
 unsigned int lerFicheiro(char* nome, unsigned char* destino);   //le um ficheiro do FAT32 (por nome 8.3) para "destino", devolve o tamanho ou 0 se nao encontrar
+unsigned int framebuffer;
+unsigned short bytesPerLine;
 void libertarPagina(unsigned int endereco);
 int verificarColisao(unsigned int endA, unsigned int tamA, unsigned int endB, unsigned int tamB);
 typedef unsigned int entradaPagina;
@@ -341,6 +344,9 @@ void kernel_main() {
 
     inicializarMemoria();
     inicializarPaginacao();
+    framebuffer = *((unsigned int*) (0x7000 + 40));
+    bytesPerLine = *((unsigned short*) (0x7000 + 16));
+    mapearFrameBuffer(framebuffer);
     lerMapaMemoria();
 
     pic_init(100);
@@ -934,3 +940,16 @@ void idt_init() {
             "iret\n" : : "r"(r)         //iret vai retirar o eip, cs e o eflags da stack e vai restaura-los, fazendo a CPU saltar para o eip
         );
     }
+
+    void mapearFrameBuffer(unsigned int fb) {
+        unsigned int indice = fb >> 22;
+
+        entradaPagina* pt = (entradaPagina*) alocarPagina();
+
+        for(int j = 0; j < 1024; j++) {
+            pt[j] = (fb + j * 4096) | 0x03;
+        }
+
+        pageDirectory[indice] = (unsigned int) pt | 0x03;
+    }
+    
