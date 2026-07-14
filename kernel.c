@@ -51,12 +51,19 @@ void preencherEcra(unsigned char r, unsigned char g, unsigned char b);
 void desenharJanelas(int x, int y, int largura, int altura, unsigned char r, unsigned char g, unsigned char b);
 void desenharTexto(int x, int y, char* texto, unsigned char r, unsigned char g, unsigned char b, int escala);
 void desenharChar(int x, int y, char c, unsigned char r, unsigned char g, unsigned char b, int escala);
+void ecraBemVindo();
+void sleep(int ms);
+void desenharMenu();
 unsigned int alocarPagina();
 unsigned int lerFicheiro(char* nome, unsigned char* destino);   //le um ficheiro do FAT32 (por nome 8.3) para "destino", devolve o tamanho ou 0 se nao encontrar
 unsigned int framebuffer;
 unsigned short bytesPerLine;
 void libertarPagina(unsigned int endereco);
 int verificarColisao(unsigned int endA, unsigned int tamA, unsigned int endB, unsigned int tamB);
+int enterPressionado = 0;
+int opcaoSelecionada = 0;
+int contadorTicks = 0;
+char* opcoes[] = {"Terminal", "Claude", "Browser", "Editor de Texto"};
 typedef unsigned int entradaPagina;
 entradaPagina pageDirectory[1024] __attribute__((aligned(4096)));
 entradaPagina pageTables[2][1024] __attribute__((aligned(4096)));   //so 2 Page Tables (8MB mapeados) em vez de 1024 - as outras 1022 nunca eram usadas e inchavam o kernel.bin em ~4MB (ficava tudo no .bss, e o "ld --oformat binary" escreve o .bss todo como zeros no binario)
@@ -356,7 +363,7 @@ void kernel_main() {
     mapearFrameBuffer(framebuffer);
     preencherEcra(0, 0, 255);
     //desenharJanelas(100, 100, 400, 300, 255, 0, 255);
-    desenharTexto(100, 100, "ola mundo!", 255, 255, 255, 4);
+    desenharTexto(100, 100, "carregando...", 255, 255, 255, 4);
     lerMapaMemoria();
 
     pic_init(100);
@@ -372,6 +379,10 @@ void kernel_main() {
 
     __asm__ volatile ("sti"); //liga interrupçoes
     //sem isto o CPU vai ignorar o PIC, mesmo com o IDT inicializado corretamente
+
+    ecraBemVindo();
+    while(!enterPressionado);
+    desenharMenu();
 
     executarPrograma();
 
@@ -503,12 +514,21 @@ void idt_init() {
                     video[cursor_pos * 2] = ' ';
                     video[cursor_pos * 2 + 1] = 0x0F;
                 }
-            } else if (c == '\n'){                                          //e se c == espaco, vai executar a funcao de espaco
-                cursor_pos = (cursor_pos / 80 + 1) * 80;                                            
-            } else if (c != 0){                                            //senao vai escrever
-                video[cursor_pos * 2] = c;                                 //posicao do curso x 2 vai ser igual a c
-                video[cursor_pos * 2 + 1] = 0x0F;                          // vai fazer a posicao a frante ter Fpreto e Lbranca
-                cursor_pos++;                                              //incrementa a variavel cursor_pos
+            }  else if (c != 0){                                            //senao vai escrever
+                if (c == 'w') {
+                    if (opcaoSelecionada > 0) opcaoSelecionada--;
+                    desenharMenu();
+                } else if (c == 's') {
+                    if (opcaoSelecionada < 3) opcaoSelecionada++;
+                    desenharMenu();
+                } else if (c == '\n'){
+                    cursor_pos = (cursor_pos / 80 + 1) * 80;
+                    enterPressionado = 1; 
+                } else {
+                    video[cursor_pos * 2] = c;                                 //posicao do curso x 2 vai ser igual a c
+                    video[cursor_pos * 2 + 1] = 0x0F;                          // vai fazer a posicao a frante ter Fpreto e Lbranca
+                    cursor_pos++;                                              //incrementa a variavel cursor_pos
+                }
             }
             if (cursor_pos >= 80 * 25) {                        //se a posicao do cursor_pos >= 80*25 = 4000
                 scroll();                                         //vai chamar a funcao scroll 
@@ -905,6 +925,7 @@ void idt_init() {
     }   
 
     void timerHandler(struct registos* r) {
+        contadorTicks++;
         processos[processoAtual].registos = *r;
         int proximoProcesso = (processoAtual + 1) % 4;    //Utilizacao do round-robin
         /*
@@ -1035,3 +1056,31 @@ void idt_init() {
             i++;
         }
     }
+
+    void ecraBemVindo() {
+        preencherEcra(0, 0, 0);
+        desenharTexto(320, 250, "LouOS", 255, 255, 255, 4);
+        sleep(3000);
+        desenharTexto(192, 350, "Prima ENTER para continuar", 255, 255, 255, 2);
+    }
+
+    void sleep(int ms) {
+        int ticksEsperar = ms / 10;
+        int ticksInicio = contadorTicks;
+        while (contadorTicks - ticksInicio < ticksEsperar);
+    }
+   
+    void desenharMenu() {
+            preencherEcra(0, 0, 0);
+            desenharTexto(320, 100, "LouOS", 255, 255, 255, 3);
+
+            for (int i = 0; i < 4; i++) {
+                if (i == opcaoSelecionada) {
+                    desenharJanelas(200, 200 + i * 60, 400, 40, 255, 255, 255);
+                    desenharTexto(210, 210 + i * 60, opcoes[i], 0, 0, 0, 2);
+                } else {
+                    desenharTexto(210, 210 + i * 60, opcoes[i], 255, 255, 255, 2);
+                }
+            }
+        }
+    
