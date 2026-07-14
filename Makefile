@@ -7,6 +7,7 @@ PROGRAMA = programa.elf
 PROGRAMA1 = programa1.elf
 PROGRAMA2 = programa2.elf
 PROGRAMA3 = programa3.elf
+TERMINAL = terminal.o
 
 all: $(IMG)
 
@@ -25,10 +26,11 @@ $(PROGRAMA2): programa2.c programa2.ld
 $(PROGRAMA3): programa3.c programa3.ld
 	gcc -m32 -ffreestanding -nostdlib -nostartfiles -fno-pie -static -T	programa3.ld -o $@ programa3.c
 
-$(KERNEL_BIN): $(KERNEL_ASM) $(KERNEL_C)
+$(KERNEL_BIN): $(KERNEL_ASM) $(KERNEL_C) terminal.c
 	nasm -f elf $(KERNEL_ASM) -o kernel.o
 	gcc -m32 -ffreestanding -fno-pie -fno-stack-protector -c $(KERNEL_C) -o kernel_c.o
-	ld -m elf_i386 -T link.ld --oformat binary -o $(KERNEL_BIN) kernel.o kernel_c.o
+	gcc -m32 -ffreestanding -fno-pie -fno-stack-protector -c terminal.c -o terminal.o
+	ld -m elf_i386 -T link.ld --oformat binary -o $(KERNEL_BIN) kernel.o kernel_c.o terminal.o
 
 $(IMG): $(BOOT) $(KERNEL_BIN) $(PROGRAMA) $(PROGRAMA1) $(PROGRAMA2) $(PROGRAMA3)
 	dd if=/dev/zero of=$(IMG) bs=1M count=512
@@ -45,6 +47,6 @@ run: $(IMG)
 	qemu-system-i386 -drive format=raw,file=$(IMG),if=ide,index=0 -boot order=c -machine pc-i440fx-3.1 -s
 
 clean:
-	rm -f $(KERNEL_BIN) $(IMG) kernel.o kernel_c.o $(PROGRAMA) $(PROGRAMA1) $(PROGRAMA2) $(PROGRAMA3)
+	rm -f $(KERNEL_BIN) $(IMG) kernel.o kernel_c.o terminal.o $(PROGRAMA) $(PROGRAMA1) $(PROGRAMA2) $(PROGRAMA3)
 
 .PHONY: all run clean

@@ -86,6 +86,7 @@ encontrou_kernel:
     mov bx, 0x8000                      ; endereco de destino na RAM onde o kernel vai ser carregado
                                          ; fica fora do loop para nao ser reposto a cada cluster - senao cada cluster
                                          ; novo apagava o anterior e so o ultimo cluster do ficheiro sobrevivia
+    mov word [destSeg], 0               ; segmento de destino - BX sozinho so cobre 64KB, tem de crescer com BX
 
 carregar_cluster:                       ; CORRIGIDO: novo label - alvo do loop em vez de "encontrou_kernel"
                                          ; assim o loop deixa de voltar a ler [si] (que so tem o 1o cluster) e usa o cluster ja actualizado pela FAT
@@ -104,6 +105,13 @@ ler_cluster:
     pop ecx             ; restaura o contador
     pop eax             ; restaura o sector atual
     add bx, 512         ; avanca o destino 512 bytes
+    jnc sem_overflow    ; se BX nao deu a volta (>0xFFFF), destSeg mantem-se
+    push ax
+    mov ax, [destSeg]   ; BX deu a volta (passou de 0xFFFF para 0x0000)
+    add ax, 0x1000       ; avanca o segmento 0x1000*16 = 0x10000 bytes, para acompanhar o offset
+    mov [destSeg], ax
+    pop ax
+sem_overflow:
     inc eax             ; avanca para o proximo sector
     loop ler_cluster    ; repete ECX vezes
 
@@ -154,7 +162,11 @@ dap:
 ; entrada: eax = LBA, bx = endereco do destino
 lerSectores:
     push si             ; guarda o registo de SI na stack
+    push ax
     mov [dap + 4], bx   ; destino do offset e preenche-o
+    mov ax, [destSeg]
+    mov [dap + 6], ax   ; destino do segmento e preenche-o (antes estava sempre a 0)
+    pop ax
     mov [dap + 8], eax  ; LBA baixo e preenche-o
     mov si, dap         ; carrega o endereco do DAP em SI
     mov ah, 0x42        ; Extended Read Sectors
@@ -177,6 +189,7 @@ fatStart dd 0
 dataStart dd 0
 nome_kernel db "KERNEL  BIN"
 clusterAtual dd 0
+destSeg dw 0
 
 times 510-($-$$) db 0   ; enche o espaco vazio no sector cheiso de 0 até ao byte 510
                         ;  $ = posicao atual : $$ = inicio de uma seccao : basicamente significa quantos bytes ja escrevi

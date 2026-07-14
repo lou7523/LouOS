@@ -1,4 +1,5 @@
 #include "fonte.h"
+#include "terminal.h"
 
 extern void keyboard_handler();
 extern unsigned char tss_descriptor[];
@@ -61,8 +62,9 @@ unsigned short bytesPerLine;
 void libertarPagina(unsigned int endereco);
 int verificarColisao(unsigned int endA, unsigned int tamA, unsigned int endB, unsigned int tamB);
 int enterPressionado = 0;
-int opcaoSelecionada = 0;
 int contadorTicks = 0;
+int estadoSistema = 0;
+int opcaoSelecionada = 0;
 char* opcoes[] = {"Terminal", "Claude", "Browser", "Editor de Texto"};
 typedef unsigned int entradaPagina;
 entradaPagina pageDirectory[1024] __attribute__((aligned(4096)));
@@ -382,6 +384,7 @@ void kernel_main() {
 
     ecraBemVindo();
     while(!enterPressionado);
+    preencherEcra(0, 0, 0);
     desenharMenu();
 
     executarPrograma();
@@ -508,22 +511,36 @@ void idt_init() {
             if (shiftPressed == 1 && c >= 97 && c <=122) {      //se ShiftPressed = 1, e c>97 e c<122, c for a ate z
                 c -= 32;                                        //faz c-32 = as letras serem maiusculas
             } 
-            if (c == '\b') {                                    //se c == backspace, vai executar a funcao de apagar
-                if (cursor_pos > 0) {   
-                    cursor_pos--;
-                    video[cursor_pos * 2] = ' ';
-                    video[cursor_pos * 2 + 1] = 0x0F;
-                }
+
+            //backspace
+            if (c == '\b') {   
+                if (estadoSistema == 1) {
+                    terminalHandleChar('\b');
+                } else {
+                    if (cursor_pos > 0) {   
+                        cursor_pos--;
+                        video[cursor_pos * 2] = ' ';
+                        video[cursor_pos * 2 + 1] = 0x0F;
+                    }
+                }                             
+    
             }  else if (c != 0){                                            //senao vai escrever
-                if (c == 'w') {
+                if (c == 'w' && estadoSistema == 0) {
                     if (opcaoSelecionada > 0) opcaoSelecionada--;
                     desenharMenu();
-                } else if (c == 's') {
+                } else if (c == 's' && estadoSistema == 0) {
                     if (opcaoSelecionada < 3) opcaoSelecionada++;
                     desenharMenu();
                 } else if (c == '\n'){
-                    cursor_pos = (cursor_pos / 80 + 1) * 80;
-                    enterPressionado = 1; 
+                    if (estadoSistema == 0) {
+                        enterPressionado = 1;
+                        if (opcaoSelecionada == 0) {
+                            estadoSistema = 1;
+                            iniciarTerminal();
+                        }
+                    }
+                } else if (estadoSistema == 1){
+                    terminalHandleChar('\n');
                 } else {
                     video[cursor_pos * 2] = c;                                 //posicao do curso x 2 vai ser igual a c
                     video[cursor_pos * 2 + 1] = 0x0F;                          // vai fazer a posicao a frante ter Fpreto e Lbranca
@@ -1071,14 +1088,13 @@ void idt_init() {
     }
    
     void desenharMenu() {
-            preencherEcra(0, 0, 0);
             desenharTexto(320, 100, "LouOS", 255, 255, 255, 3);
-
             for (int i = 0; i < 4; i++) {
                 if (i == opcaoSelecionada) {
                     desenharJanelas(200, 200 + i * 60, 400, 40, 255, 255, 255);
                     desenharTexto(210, 210 + i * 60, opcoes[i], 0, 0, 0, 2);
                 } else {
+                    desenharJanelas(200, 200 + i * 60, 400, 40, 0, 0, 0);
                     desenharTexto(210, 210 + i * 60, opcoes[i], 255, 255, 255, 2);
                 }
             }
