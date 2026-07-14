@@ -1,3 +1,5 @@
+#include "fonte.h"
+
 extern void keyboard_handler();
 extern unsigned char tss_descriptor[];
 extern void saltarRing3(unsigned int eip);
@@ -44,6 +46,11 @@ void syscallHandlerC();
 void pit_init(int frequencia);
 void timerHandler(struct registos* r);
 void mapearFrameBuffer(unsigned int fb);
+void desenharPixel(int x, int y, unsigned char r, unsigned char g, unsigned char b);
+void preencherEcra(unsigned char r, unsigned char g, unsigned char b);
+void desenharJanelas(int x, int y, int largura, int altura, unsigned char r, unsigned char g, unsigned char b);
+void desenharTexto(int x, int y, char* texto, unsigned char r, unsigned char g, unsigned char b, int escala);
+void desenharChar(int x, int y, char c, unsigned char r, unsigned char g, unsigned char b, int escala);
 unsigned int alocarPagina();
 unsigned int lerFicheiro(char* nome, unsigned char* destino);   //le um ficheiro do FAT32 (por nome 8.3) para "destino", devolve o tamanho ou 0 se nao encontrar
 unsigned int framebuffer;
@@ -347,6 +354,9 @@ void kernel_main() {
     framebuffer = *((unsigned int*) (0x7000 + 40));
     bytesPerLine = *((unsigned short*) (0x7000 + 16));
     mapearFrameBuffer(framebuffer);
+    preencherEcra(0, 0, 255);
+    //desenharJanelas(100, 100, 400, 300, 255, 0, 255);
+    desenharTexto(100, 100, "ola mundo!", 255, 255, 255, 4);
     lerMapaMemoria();
 
     pic_init(100);
@@ -942,14 +952,86 @@ void idt_init() {
     }
 
     void mapearFrameBuffer(unsigned int fb) {
-        unsigned int indice = fb >> 22;
+        unsigned int indice = fb >> 22;                         //diz qual e a entrada do pageDirectory que corresponde ao framebuffer
 
-        entradaPagina* pt = (entradaPagina*) alocarPagina();
+        entradaPagina* pt = (entradaPagina*) alocarPagina();    //Vai alocar uma pagina
 
         for(int j = 0; j < 1024; j++) {
-            pt[j] = (fb + j * 4096) | 0x03;
+            pt[j] = (fb + j * 4096) | 0x03;                     //Vai preencher as paginas do framebuffer para o endereco fisico real
         }
 
-        pageDirectory[indice] = (unsigned int) pt | 0x03;
+        pageDirectory[indice] = (unsigned int) pt | 0x03;       //Liga ao pageDirectory
     }
-    
+
+    void desenharPixel(int x, int y, unsigned char r, unsigned char g, unsigned char b) {       //Funcao para poder desenhar em modo grafico
+        unsigned char* pixel = (unsigned char*)(framebuffer + y * bytesPerLine + x * 3);        
+        pixel[0] = b;   
+        pixel[1] = g;
+        pixel[2] = r;
+        
+        /*
+            framebuffer - o endereco de base do framebuffer, onde comeca o primeiro pixel. A BIOS escreve este valor em 0x7040
+
+            y * bytesPerLine - para chegar a linha y, salta-se y linhas inteiras. Cada linha tem bytesPerline bytes
+
+            x * 3 - Dentro da linha cada pixel ocupa 3 bytes (B, G, R). Para chegar a coluna x, salta-se x*3 bytes desde o inicio da linha
+
+            unsigned char* - o resultado da operacao inteira vai dar uma variavel do tipo int, mas aqui temos de tratar como
+            um ponteiro para bytes, para conseguirmos escrever pixel[0]... O cast converte o numero num ponteiro para byte
+
+            Se fosse unsigned int ao inves de unsigned char, cada acesso escreveria 4 bytes ao inves de 1 byte,
+            o 4o byte ia invadir o inicio do proximo pixel, corrompendo a sua cor.
+        */
+    }
+
+    void preencherEcra(unsigned char r, unsigned char g, unsigned char b) {
+        for(int x = 0; x <= 800; x++) {
+            for(int y = 0; y <= 600; y++) {
+                desenharPixel(x, y, r, g, b);
+            }
+        }
+    }
+
+    void desenharJanelas(int x, int y, int largura, int altura, unsigned char r, unsigned char g, unsigned char b) {    
+        for (int cy = y; cy < y + altura; cy++) {           //A
+            for (int cx = x; cx < x + largura; cx++) {      //B
+                desenharPixel(cx, cy, r, g, b);             //C
+            }
+        }
+
+        /*
+            a funcao recebe a coordenada (x, y), a largura e altura da janela, e a cor (rgb)
+
+            A - percorre as linhas do retangulo. Comeca na linha y, e percorre tudo ate y + altura (final), 
+                cy e a coordenada horizontal atual.
+
+            B - percorre as colunas do retangulo. Comeca na coluna x, e percorre tudo ate x + largura (direita),
+                cx e a coordenada vertical atual.
+
+            C - para cada posicao cx, cy dentro do retangulo, este pinta-o com a cor pedidda
+        */
+    }
+
+    //Usei a fonte bitmap do OS dev font8x8_basic para desenhar texto em modo grafico 
+    void desenharChar(int x, int y, char c, unsigned char r, unsigned char g, unsigned char b, int escala) {
+        unsigned char* glifo = font8x8_basic[(unsigned char)c];
+        for (int linha = 0; linha < 8; linha++) {
+            for (int col = 0; col < 8; col ++) {
+                if (glifo[linha] & (1 << col))  {
+                    for (int dy = 0; dy < escala; dy++) {
+                        for (int dx = 0; dx < escala; dx++) {
+                            desenharPixel(x + col * escala + dx, y + linha * escala + dy, r, g, b);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    void desenharTexto(int x, int y, char* texto, unsigned char r, unsigned char g, unsigned char b, int escala) {
+        int i = 0;
+        while (texto[i]) {
+            desenharChar(x + i * 8 * escala, y, texto[i], r, g, b, escala);
+            i++;
+        }
+    }
