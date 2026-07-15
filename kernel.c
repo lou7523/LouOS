@@ -2,6 +2,7 @@
 #include "terminal.h"
 
 extern void keyboard_handler();
+extern void mouse_handler();
 extern unsigned char tss_descriptor[];
 extern void saltarRing3(unsigned int eip);
 extern void syscallHandler();
@@ -33,6 +34,7 @@ int processoAtual = 0;          //o processo atual esta em 0
 void saltarParaProcesso(struct registos* r);
 void pic_init(int frequencia);
 void idt_init();
+void mouse_init();
 void idt_set(int numero, unsigned int handler);
 void idtSetType(int numero, unsigned int handler, unsigned char tipo);
 void imprimirNumero(int numero, int posicao);
@@ -66,6 +68,8 @@ int enterPressionado = 0;
 int contadorTicks = 0;
 int estadoSistema = 0;
 int opcaoSelecionada = 0;
+int mouseX = 400;
+int mouseY = 300;
 char* opcoes[] = {"Terminal", "IA", "Browser", "Editor de Texto"};
 typedef unsigned int entradaPagina;
 entradaPagina pageDirectory[1024] __attribute__((aligned(4096)));
@@ -370,6 +374,7 @@ void kernel_main() {
     lerMapaMemoria();
 
     pic_init(100);
+    mouse_init();
     pit_init(100); 
     idt_init();
     idt_set(8, (unsigned int) doubleFault);
@@ -379,6 +384,7 @@ void kernel_main() {
     idtSetType(0x80, (unsigned int) syscallHandler, 0xEE);
     configurarTSS();
     idt_set(0x21, (unsigned int) keyboard_handler);
+    idt_set(0x2C, (unsigned int) mouse_handler);
 
     __asm__ volatile ("sti"); //liga interrupçoes
     //sem isto o CPU vai ignorar o PIC, mesmo com o IDT inicializado corretamente
@@ -406,9 +412,10 @@ void pic_init(int frequencia) {
     //ICW4 - modo 8086 (modo normal de 32bits)
     outb(0x21, 0x01); //Mete o mestre em modo de 32-bits
     outb(0xA1, 0x01); //Mete o escravo em modo de 32-bits
-    //Máscaras - bloquear tudo excepto o teclado e o timer, este e um byte onde cada bit corresponde a uma IRQ 0 = permitir 1 = bloquear
-    outb(0x21, 0xFC); //0xFC em binario e 1111 1100, onde o bit 1 e 0 e o bit 0 e 0 - IRQ1 e o IRQ0 (teclado e timer) sao os unicos permitidos o resto e bloqueado
-    outb(0xA1, 0xFF); //0xFF bloqueia todas as IRQs do PIC escravo
+    //Máscaras - bloquear tudo excepto o teclado, o timer e o rato, este e um byte onde cada bit corresponde a uma IRQ 0 = permitir 1 = bloquear
+    outb(0x21, 0xF8); //1111 1000 - permite IRQ0 (timer), IRQ1 (teclado), IRQ2 (escravo)
+    outb(0xA1, 0xEF); //1110 1111 - permite IRQ12 (rato)
+
     
     /*
         PIC - O CPU só tem uma linha de interrupção. 
@@ -575,6 +582,33 @@ void idt_init() {
                 scroll();                                         //vai chamar a funcao scroll 
                 cursor_pos = 1920;                                //e vai meter a posicao do cursor a 1920
             }
+        }
+    }
+
+    void mouse_init() {
+        outb(0x64, 0xA8); //ativa o rato
+        outb(0x60, 0xF4); //diz ao rato para enviar dados
+    }
+
+    void mouse_handler_c() {
+        static int fase = 0;
+        static char botoes;
+        static char deltaX;
+        static char deltaY;
+        unsigned char byte = inb(0x60);
+        if (fase == 0) {
+            botoes = byte;
+            fase++;
+        } else if (fase == 1) {
+            deltaX = byte;
+            fase++;
+        } else {
+            deltaY = byte;
+            fase = 0;
+            desenharJanelas(mouseX, mouseY, 16, 16, 0, 0, 0);
+            mouseX += deltaX;
+            mouseY -= deltaY;
+            desenharJanelas(mouseX, mouseY, 16, 16, 255, 255, 255);
         }
     }
 

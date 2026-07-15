@@ -4,8 +4,10 @@ global keyboard_handler
 global tss_descriptor
 global saltarRing3 
 global syscallHandler
-global timer_handler    
+global timer_handler   
+global mouse_handler 
 extern keyboard_handler_c       ;Diz ao assembler que estas funcoes estao noutro ficheiro
+extern mouse_handler_c
 extern kernel_main
 extern syscallHandlerC
 extern timerHandler
@@ -90,6 +92,15 @@ keyboard_handler:
     mov al, 0x20                ; Avisa o PIC que terminamos a interrupcao
     out 0x20, al                ; permite-nos avancar para a prox
     iret                        ; restaura o EIP, CS e EFLAGS
+
+mouse_handler:
+    pusha
+    call mouse_handler_c
+    mov al, 0x20
+    out 0xA0, al
+    out 0x20, al
+    popa 
+    iret
 
 timer_handler:
     pusha
