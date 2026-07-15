@@ -36,6 +36,7 @@ void idt_init();
 void idt_set(int numero, unsigned int handler);
 void idtSetType(int numero, unsigned int handler, unsigned char tipo);
 void imprimirNumero(int numero, int posicao);
+void intParaString(int numero, char* buffer);
 void scroll();
 void lerMapaMemoria();
 void inicializarMemoria();
@@ -65,7 +66,7 @@ int enterPressionado = 0;
 int contadorTicks = 0;
 int estadoSistema = 0;
 int opcaoSelecionada = 0;
-char* opcoes[] = {"Terminal", "Claude", "Browser", "Editor de Texto"};
+char* opcoes[] = {"Terminal", "IA", "Browser", "Editor de Texto"};
 typedef unsigned int entradaPagina;
 entradaPagina pageDirectory[1024] __attribute__((aligned(4096)));
 entradaPagina pageTables[2][1024] __attribute__((aligned(4096)));   //so 2 Page Tables (8MB mapeados) em vez de 1024 - as outras 1022 nunca eram usadas e inchavam o kernel.bin em ~4MB (ficava tudo no .bss, e o "ld --oformat binary" escreve o .bss todo como zeros no binario)
@@ -624,6 +625,23 @@ void idt_init() {
             video[(posicao + j) * 2] = buffer[i - 1 - j];
             video[(posicao + j) * 2 + 1] = 0x0F;
         }
+    }
+
+    void intParaString(int numero, char* buffer) {
+        int i = 0;
+        while (numero > 0) {
+            buffer[i] = (numero % 10) + '0';
+            numero = numero / 10;
+            i++;
+        }
+
+        for (int j = 0; j < i / 2; j++) {
+            char temp = buffer[j];
+            buffer[j] = buffer[i - 1 - j];
+            buffer[i - 1 - j] = temp;
+        }
+
+        buffer[i] = 0;
     }
 
     void inicializarMemoria() {
