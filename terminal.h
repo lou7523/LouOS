@@ -6,3 +6,6 @@ extern void desenharChar(int x, int y, char c, unsigned char r, unsigned char g,
 
 void iniciarTerminal();
 void terminalHandleChar(char c);
+void clear();
+int compararStrings();
+void errorMessage();

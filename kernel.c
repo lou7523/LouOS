@@ -498,16 +498,36 @@ void idt_init() {
 
     int cursor_pos = 10;                                        //Ond eo user comeca a escrever
     int shiftPressed = 0;
+    int scancodeEstendido = 0;                                  //fica a 1 depois de receber o prefixo 0xE0 (teclas especiais: setas, home, etc)
     void keyboard_handler_c(){                                  //funcao que e chamada em assembly
         unsigned char scancode = inb(0x60);                     //Le o byte 1 do porto 0x60
         char* video = (char*) 0xB8000;                          //Endereco fixo da memoria grafica
-        if (scancode == 0xAA || scancode == 0xB6) {             //se SHIFT (esq/dir) for largado 
+
+        if (scancode == 0xE0) {                                 //teclas especiais (setas...) mandam sempre 0xE0 antes do scancode real
+            scancodeEstendido = 1;                              //o byte seguinte tem de ser tratado a parte, nao pela tabela scancodeParaAscii
+            return;
+        }
+
+        if (scancodeEstendido) {                                //este e o byte que vem a seguir ao 0xE0
+            scancodeEstendido = 0;
+            if (scancode == 0x48 && estadoSistema == 0) {           //seta cima (make code), mesmo comportamento que 'w' no menu
+                if (opcaoSelecionada > 0) opcaoSelecionada--;
+                desenharMenu();
+            } else if (scancode == 0x50 && estadoSistema == 0) {    //seta baixo (make code), mesmo comportamento que 's' no menu
+                if (opcaoSelecionada < 3) opcaoSelecionada++;
+                desenharMenu();
+            }
+            return;                                             //nunca deixar estes scancodes (podem ser >= 58) chegar a tabela scancodeParaAscii
+        }
+
+        if (scancode == 0xAA || scancode == 0xB6) {             //se SHIFT (esq/dir) for largado
             shiftPressed = 0;                                   //Shift Pressed = 0
         } else if (scancode < 128) {                            //Para nao digitar uma tecla quando e largada so quando pressionada
             if (scancode == 0x2A || scancode == 0x36) {
                 shiftPressed = 1;
             }
-            char c = scancodeParaAscii[scancode];               //Traduz o numero scancode para o char correspondente
+            char c = (scancode < sizeof(scancodeParaAscii)) ? scancodeParaAscii[scancode] : 0;   //Traduz o numero scancode para o char correspondente
+                                                                                                    //o bounds-check evita ler lixo fora da tabela (so tem 58 entradas) para scancodes nao mapeados
             if (shiftPressed == 1 && c >= 97 && c <=122) {      //se ShiftPressed = 1, e c>97 e c<122, c for a ate z
                 c -= 32;                                        //faz c-32 = as letras serem maiusculas
             } 
@@ -533,14 +553,17 @@ void idt_init() {
                     desenharMenu();
                 } else if (c == '\n'){
                     if (estadoSistema == 0) {
-                        enterPressionado = 1;
-                        if (opcaoSelecionada == 0) {
+                        if (!enterPressionado) {
+                            enterPressionado = 1;          //este Enter so serve para sair do ecra de boas-vindas, ainda nao estamos no menu
+                        } else if (opcaoSelecionada == 0) {    //so confirma uma opcao do menu depois do 1o Enter ja ter saido do ecra de boas-vindas
                             estadoSistema = 1;
                             iniciarTerminal();
                         }
+                    } else if (estadoSistema == 1) {
+                        terminalHandleChar('\n');
                     }
                 } else if (estadoSistema == 1){
-                    terminalHandleChar('\n');
+                    terminalHandleChar(c);
                 } else {
                     video[cursor_pos * 2] = c;                                 //posicao do curso x 2 vai ser igual a c
                     video[cursor_pos * 2 + 1] = 0x0F;                          // vai fazer a posicao a frante ter Fpreto e Lbranca
