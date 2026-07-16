@@ -2,39 +2,16 @@
 #include "terminal.h"
 
 extern void keyboard_handler();
-extern void mouse_handler();
 extern unsigned char tss_descriptor[];
 extern void saltarRing3(unsigned int eip);
 extern void syscallHandler();
 extern void timer_handler();
-
-struct registos {                                   //struct que vai guardar o registo de um processo (multitasking)
-        unsigned int edi;                           
-        unsigned int esi;
-        unsigned int ebp;
-        unsigned int esp;
-        unsigned int ebx;
-        unsigned int edx;
-        unsigned int ecx;
-        unsigned int eax;
-        unsigned int eip;
-        unsigned int cs;
-        unsigned int eflags;
-    } __attribute__ ((packed));
-    
-struct processos {
-        unsigned int estado; //0 = bloqueia  1 = permite
-        unsigned int enderecoProcesso; //Para saber onde esta cada endereco na stack
-        unsigned int cr3; //0x07
-        struct registos registos; //adiciona a struct registos dentro de processos
-    };
 
 struct processos processos[4];  //declara que pode haver ate 4 processos em simultaneo
 int processoAtual = 0;          //o processo atual esta em 0
 void saltarParaProcesso(struct registos* r);
 void pic_init(int frequencia);
 void idt_init();
-void mouse_init();
 void idt_set(int numero, unsigned int handler);
 void idtSetType(int numero, unsigned int handler, unsigned char tipo);
 void imprimirNumero(int numero, int posicao);
@@ -68,8 +45,6 @@ int enterPressionado = 0;
 int contadorTicks = 0;
 int estadoSistema = 0;
 int opcaoSelecionada = 0;
-int mouseX = 400;
-int mouseY = 300;
 char* opcoes[] = {"Terminal", "IA", "Browser", "Editor de Texto"};
 typedef unsigned int entradaPagina;
 entradaPagina pageDirectory[1024] __attribute__((aligned(4096)));
@@ -374,8 +349,7 @@ void kernel_main() {
     lerMapaMemoria();
 
     pic_init(100);
-    mouse_init();
-    pit_init(100); 
+    pit_init(100);
     idt_init();
     idt_set(8, (unsigned int) doubleFault);
     idt_set(13, (unsigned int) handlerGPF);
@@ -384,7 +358,6 @@ void kernel_main() {
     idtSetType(0x80, (unsigned int) syscallHandler, 0xEE);
     configurarTSS();
     idt_set(0x21, (unsigned int) keyboard_handler);
-    idt_set(0x2C, (unsigned int) mouse_handler);
 
     __asm__ volatile ("sti"); //liga interrupçoes
     //sem isto o CPU vai ignorar o PIC, mesmo com o IDT inicializado corretamente
@@ -412,9 +385,9 @@ void pic_init(int frequencia) {
     //ICW4 - modo 8086 (modo normal de 32bits)
     outb(0x21, 0x01); //Mete o mestre em modo de 32-bits
     outb(0xA1, 0x01); //Mete o escravo em modo de 32-bits
-    //Máscaras - bloquear tudo excepto o teclado, o timer e o rato, este e um byte onde cada bit corresponde a uma IRQ 0 = permitir 1 = bloquear
-    outb(0x21, 0xF8); //1111 1000 - permite IRQ0 (timer), IRQ1 (teclado), IRQ2 (escravo)
-    outb(0xA1, 0xEF); //1110 1111 - permite IRQ12 (rato)
+    //Máscaras - bloquear tudo excepto o teclado e o timer, este e um byte onde cada bit corresponde a uma IRQ 0 = permitir 1 = bloquear
+    outb(0x21, 0xFC); //1111 1100 - permite IRQ0 (timer), IRQ1 (teclado)
+    outb(0xA1, 0xFF); //1111 1111 - bloqueia todas as IRQs do escravo (nao ha nenhum dispositivo a usa-las)
 
     
     /*
@@ -585,33 +558,6 @@ void idt_init() {
         }
     }
 
-    void mouse_init() {
-        outb(0x64, 0xA8); //ativa o rato
-        outb(0x60, 0xF4); //diz ao rato para enviar dados
-    }
-
-    void mouse_handler_c() {
-        static int fase = 0;
-        static char botoes;
-        static char deltaX;
-        static char deltaY;
-        unsigned char byte = inb(0x60);
-        if (fase == 0) {
-            botoes = byte;
-            fase++;
-        } else if (fase == 1) {
-            deltaX = byte;
-            fase++;
-        } else {
-            deltaY = byte;
-            fase = 0;
-            desenharJanelas(mouseX, mouseY, 16, 16, 0, 0, 0);
-            mouseX += deltaX;
-            mouseY -= deltaY;
-            desenharJanelas(mouseX, mouseY, 16, 16, 255, 255, 255);
-        }
-    }
-
     void scroll() {
         char* video = (char*) 0xB8000;  //endereco de memoria grafica
         int i;
@@ -707,6 +653,15 @@ void idt_init() {
                 }
             }
         j++;        //vai para o seguinte
+        }
+
+        //o mapa E820 marca os primeiros ~640KB como "usaveis", mas e ai que o proprio kernel esta carregado
+        //(codigo, IDT, TSS, page tables, stack) - sem isto o alocarPagina() devolvia paginas dentro do kernel,
+        //e o lerFicheiro() sobrescrevia a IDT em runtime com bytes de ficheiros ELF, corrompendo o vetor do
+        //timer e causando um triple fault (crash + reboot) pouco depois de sair do ecra de boas-vindas
+        unsigned int paginasReservadas = 0x90000 / TamanhoPagina;   //0x90000 e o topo do stack do kernel (kernel.asm e tss.esp0)
+        for (unsigned int x = 0; x < paginasReservadas; x++) {
+            bitmap[x / 32] |= (1 << (x % 32));
         }
     };
 
@@ -870,67 +825,6 @@ void idt_init() {
             }
         }
     }
-
-    //BootSector
-
-    struct FAT32BootSector {
-        unsigned char jump[3];              //Os primeiros 3 bytes do sector sao uma instrucao x86 (JMP + NOP), 
-                                            //este salta por cima dos dados do bootsector para o codigo de arranque
-                                            //Como ja tenho bootloader nao vou usar isto (em principio)
-        unsigned char oemName[8];           //Nome do sistema que formatou o disco
-        unsigned short bytesPerSector;      //Quase sempre 512. Este define o tamanho de cada sector fisico do disco
-                                            //usa-se este valor para calcular onde estao as estruturas do filesystems
-        unsigned char sectorsPerCluster;    //Normalmente este e 8 (4KB p/ cluster) Um ficheiro de 1 byte ocupa um cluster inteiro
-        unsigned short reservedSectors;     //Quantos sectores antes do primeiro ficheiro FAT
-        unsigned char numFAT;               //(2) Há sempre um ficheiro FAT principal e a sua copia de seguranca
-                                            //se o principal estiver corrompido o OS pode usar a copia de seguranca
-        unsigned short rootEntryCount;      //Em FAT32 e sempre 0. Em FAT12 e 16 estes tem um valor fixo
-        unsigned short totalSectors16;      //Em FAT32 este é sempre 0. Era usado em FAT12/FAT16 para discos pequenos (16-bits)
-        unsigned char mediaType;            //0xF8 para o disco rigido fixo, 0xF0 para disquetes. Nao vai ser usado
-        unsigned short sectoresPerFAT16;    //Em FAT32 e sempre 0, mas este era usado em FAT12/16, nao vamos usar aqui
-        unsigned short sectoresPerTrack;    //Sectores por trilha, geometria fisica do disco (CHS), nao e importante pois estamos a usar LBA
-        unsigned short numHeads;            //Tambem nao é relevante pois usamos LBA
-        unsigned int hiddenSectors;         //Sectores ocultos quantos sectores existem antes da particao do disco
-        unsigned int totalSectors32;        //Numero total de sectores do volume. Usa-se para saber o tamanho total do disco
-        unsigned int sectorsPerFAT32;      //Quantos sectores ocupa cada copia de FAT 
-                                            //inicio da area de dados = reservedSectors + (numFATs * sectorsPerFAT32)   
-        unsigned short extFlags;            //Controla qual FAT esta ativa (main / copy)
-        unsigned short fsVersion;           //Versao do Filesystem (0x0000) normalmente 0.0
-        unsigned int rootCluster;           //Cluster do root directory, este e normalmente 2, e aqui que comeca a lista de ficheiros e pastas da raiz
-        unsigned short fsInfo;              //Normalmente e 1. O fsInfo é uma estrutura que guarda o numero de clusters livres para nao ter de contar sempre 0
-        unsigned short backupBootSector;    //Sector de backup do bootsector, normalmente 6, copia do boot sector para a recuperacao em caso de corrupcao
-        unsigned char reserved[12];         //Bytes a 0 para o futuro
-        unsigned char driveNumber;          //0x80 para hard drive, 0x00 para disquetes. Legado da BIOS (ignorar)
-        unsigned char reserved2;            //Sempre 0 (ignorar)
-        unsigned char bootSignature;        //0x29 indica o volumeID, volumeLabel, fsType
-        unsigned int volumeID;              //Numero aleatorio gerado quando o disco foi formatado. Usado para identificar o disco.
-        unsigned char volumeLabel[11];      //O nome que se da ao disco
-        unsigned char fsType[8];            //Usado para detectar campos anteriores
-        /*
-            Disto tudo só se vai usar:
-                -bytesPerSector 
-                -sectorPerCluster
-                -reservedSectors
-                -numFATs
-                -sectorsPerFAT32
-                -rootCluster
-
-            Tudo o resto e legado, cosmetico ou para compatibilidade
-        */
-    } __attribute__((packed));
-
-    struct FAT32DirEntry {
-        unsigned char nome[8];          //Nome do ficheiro
-        unsigned char ext[3];           //extensao (.txt .pdf .jpg)
-        unsigned char atributos;        //tipo de entrada (ficheiro, pasta)
-        unsigned char ignorados1[8];    //campos nao usados
-        unsigned short clusterAlto;     //16 bits superiores do cluster
-        unsigned char ignorado2[4];     //campos nao usados
-        unsigned short clusterBaixo;    //16 bits inferiores do cluster
-        unsigned int tamanho;           //tamanho do ficheiro em bytes
-        //Cluster - É um grupo de entradas de sectores consecutivos no disco, é a unidade minima de alocacao de ficheiros FAT32
-
-    } __attribute__ ((packed)); 
 
     unsigned int lerFicheiro(char* nome, unsigned char* destino) {
         //Le um ficheiro do root directory do FAT32 pelo nome 8.3 (ex: "PROGRAMAELF", sem ponto nem espacos)
